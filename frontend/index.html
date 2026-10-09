@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Austin Food Scores</title>
+  <meta name="description" content="Health inspection scores and trends for Austin and Travis County food establishments.">
+  <link rel="stylesheet" href="vendor/leaflet-1.9.4/leaflet.css">
+  <link rel="stylesheet" href="vendor/leaflet.markercluster-1.5.3/MarkerCluster.css">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="topbar">
+    <h1>Austin Food Scores</h1>
+    <form class="filters" id="filters" aria-label="Filters">
+      <fieldset class="bands">
+        <legend class="visually-hidden">Latest score band</legend>
+        <label class="band-toggle green"><input type="checkbox" name="band" value="green" checked> 90+</label>
+        <label class="band-toggle yellow"><input type="checkbox" name="band" value="yellow" checked> 70–89</label>
+        <label class="band-toggle red"><input type="checkbox" name="band" value="red" checked> &lt;70</label>
+        <label class="band-toggle none"><input type="checkbox" name="band" value="none" checked> No score</label>
+      </fieldset>
+      <label class="zip">
+        <span class="visually-hidden">ZIP code</span>
+        <input type="text" name="zip" inputmode="numeric" pattern="[0-9]{5}" maxlength="5" placeholder="ZIP" autocomplete="postal-code">
+      </label>
+      <button type="button" id="show-decliners">Decliners</button>
+    </form>
+    <p class="count" id="count" aria-live="polite"></p>
+  </header>
+
+  <main class="layout">
+    <div id="map" class="map" role="application" aria-label="Map of food establishments"></div>
+
+    <aside class="panel" id="panel" hidden aria-live="polite">
+      <button type="button" class="panel-close" id="panel-close" aria-label="Close panel">×</button>
+      <div id="panel-body"></div>
+    </aside>
+  </main>
+
+  <footer class="footer">
+    <span class="legend">
+      <span class="dot green"></span>90+ <span class="dot yellow"></span>70–89
+      <span class="dot red"></span>&lt;70 <span class="dot none"></span>no score
+    </span>
+    <span>
+      Data: <a href="https://data.austintexas.gov/Health-and-Community-Services/Food-Establishment-Inspection-Scores/ecmv-9xxi" rel="noopener">City of Austin Open Data</a>,
+      with history kept beyond the city's 3-year window.
+      Name prefixes like “PF -” or “LW -” mark other Travis County jurisdictions.
+      <a href="https://github.com/jtravisp/austinfoodscores" rel="noopener">Source</a>
+    </span>
+  </footer>
+
+  <script src="vendor/leaflet-1.9.4/leaflet.js"></script>
+  <script src="vendor/leaflet.markercluster-1.5.3/leaflet.markercluster.js"></script>
+  <script type="module" src="app.js"></script>
+</body>
+</html>

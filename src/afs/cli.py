@@ -79,19 +79,38 @@ def cmd_remote_fetch(args: argparse.Namespace) -> None:
 
 
 def cmd_serve(args: argparse.Namespace) -> None:
-    """Serve the read API locally (docker Postgres), mirroring API Gateway's routes."""
+    """Serve the site locally the way CloudFront does: frontend/ at /, the read API at /api/*.
+
+    One origin, so no CORS, and the same Content-Security-Policy header as
+    CloudFront (read from the file Terraform uses), so CSP problems show up here first.
+    """
+    import mimetypes
     import re
     from http.server import BaseHTTPRequestHandler, HTTPServer
-    from urllib.parse import parse_qsl, urlsplit
+    from urllib.parse import parse_qsl, unquote, urlsplit
 
     from afs import api
 
+    # On Windows, mimetypes consults the registry, which can map .js to text/plain;
+    # browsers refuse to run module scripts served with the wrong type.
+    mimetypes.add_type("text/javascript", ".js")
+    mimetypes.add_type("text/css", ".css")
+
+    root = Path(__file__).resolve().parents[2]
+    site = (root / "frontend").resolve()
+    csp = (root / "infra" / "modules" / "frontend" / "csp.txt").read_text(encoding="utf-8").strip()
     conn = db.connect()
     detail = re.compile(r"^/api/establishments/([^/]+)$")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             url = urlsplit(self.path)
+            if url.path.startswith("/api/"):
+                self.api(url)
+            else:
+                self.static(unquote(url.path))
+
+        def api(self, url):
             query, path_params = dict(parse_qsl(url.query)), {}
             if url.path == "/api/establishments":
                 route_key = "GET /api/establishments"
@@ -101,17 +120,29 @@ def cmd_serve(args: argparse.Namespace) -> None:
                 route_key, path_params = "GET /api/establishments/{facility_id}", {"facility_id": match.group(1)}
             else:
                 route_key = f"GET {url.path}"
-
             status, content_type, body = api.route(conn, route_key, query, path_params)
-            payload = api.to_json(body).encode()
+            self.reply(status, content_type, api.to_json(body).encode())
+
+        def static(self, path):
+            target = (site / path.lstrip("/")).resolve()
+            if target.is_dir():
+                target = target / "index.html"
+            # Refuse anything that resolves outside frontend/ (e.g. /../.env).
+            if not target.is_relative_to(site) or not target.is_file():
+                self.reply(404, "text/plain", b"not found")
+                return
+            content_type = mimetypes.guess_type(target.name)[0] or "application/octet-stream"
+            self.reply(200, content_type, target.read_bytes())
+
+        def reply(self, status, content_type, payload):
             self.send_response(status)
             self.send_header("content-type", content_type)
-            self.send_header("access-control-allow-origin", "*")  # until serve also hosts the frontend (Phase 4)
+            self.send_header("content-security-policy", csp)
             self.send_header("content-length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
 
-    print(f"serving the API on http://localhost:{args.port} (Ctrl+C to stop)")
+    print(f"serving http://localhost:{args.port} (site + /api; Ctrl+C to stop)")
     HTTPServer(("localhost", args.port), Handler).serve_forever()
 
 
