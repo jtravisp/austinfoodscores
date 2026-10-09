@@ -104,4 +104,4 @@ Snapshot as of 2026-10-08: trend is stable for 2,987 establishments, declining f
 
 ## Open questions
 
-- How to run DDL and `GRANT rds_iam` with master credentials inside a VPC with no NAT (Phase 2).
+- None currently. (Resolved: database setup uses an RDS-managed master secret that the invoker passes to an in-VPC migrate Lambda. See CLAUDE.md, "Database access in AWS".)
