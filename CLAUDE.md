@@ -53,7 +53,16 @@ Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `
 
 ## Ingest strategy
 
-The source rewrites every row on each publish (`:updated_at` is identical across rows), so there is no per-row watermark. Each run: read the dataset's `rowsUpdatedAt` metadata; if it equals the last succeeded run's `watermark`, record a `skipped` run and stop; otherwise pull the full snapshot (~20k rows) and upsert everything. Full snapshots also pick up corrections to old rows.
+The source rewrites every row on each publish (`:updated_at` is identical across rows), so there is no per-row watermark. The watermark is the dataset's `dataUpdatedAt` (from `/api/views/metadata/v1/ecmv-9xxi`).
+
+- **Fetch** (outside the VPC; can't reach RDS) always pulls the full snapshot (~20k rows, ~1.2 MB gzipped) and writes one file. It reads the watermark *before* the rows.
+- **Load** decides: if the snapshot's watermark equals the last `succeeded` run's watermark, it records a `skipped` run and upserts nothing. `ingest_runs` is the single audit trail.
+- Rejected rows are skipped and recorded, but the run **fails** (loads nothing) if rejects exceed 1% of rows. That catches upstream format changes.
+- Full snapshots also pick up corrections to old rows. Dev uses `--since-days 90`.
+
+Snapshot file (`src/afs/snapshot.py`): one gzipped JSON envelope per fetch at `raw/YYYY-MM-DD/ecmv-9xxi-HHMMSSZ.json.gz` (UTC), holding `{format_version, dataset, fetched_at, watermark, query, row_count, rows}`; `rows` are untouched API rows. Locally it's written under `data/` (gitignored); in AWS, the S3 bucket.
+
+SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageNumber" (1-based), "pageSize" ≤ 50000}}`, ordered by `inspectionid` for stable paging. A bad token returns 403.
 
 ## Architecture (no NAT gateway; minimize cost)
 
@@ -86,7 +95,11 @@ The source rewrites every row on each publish (`:updated_at` is identical across
 
 ```
 docker-compose.yml, pyproject.toml, uv.lock
-src/afs/{transform,socrata,db,cli}.py, handlers/{fetch,load,query}.py
+src/afs/transform.py   pure cleaning: raw row -> Establishment/Inspection
+src/afs/socrata.py     stdlib-only API client (injectable transport for tests)
+src/afs/snapshot.py    raw file format shared by fetch and load
+src/afs/pipeline.py    orchestration shared by CLI and Lambda; storage left to caller
+src/afs/db.py, cli.py, handlers/{fetch,load,query}.py
 src/afs/migrations/NNN_*.sql   numbered, append-only; applied by db.migrate()
                                (metrics live here as a SQL view)
 src/afs/cli.py  local CLI: `uv run afs migrate|fetch|load`
