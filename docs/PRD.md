@@ -30,7 +30,7 @@ Austin Public Health publishes food establishment inspection scores (Socrata dat
 ## Functional requirements
 
 ### Map (frontend)
-- Clustered markers for all establishments with coordinates, colored by latest score band (Green 90+, Yellow 70–89, Red <70).
+- Clustered markers for all establishments with coordinates, colored by latest score band (Green 90+, Yellow 70–89, Red <70, gray for no score). Clusters are donuts showing the band mix.
 - Filters: score band, zip code. Only establishments in the current map view (bbox) are loaded.
 - Clicking a marker opens a detail panel: name, address, latest score, inspection history (date, score, process), and a small trend chart.
 - A "Decliners" view listing establishments with the largest recent score drops.

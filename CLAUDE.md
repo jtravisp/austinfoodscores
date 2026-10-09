@@ -126,6 +126,7 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
   2. `$env:AWS_PROFILE="afs-dev"; terraform -chdir=infra/envs/dev apply`
   3. `uv run afs remote-migrate --env dev --bootstrap`
   4. `uv run afs remote-fetch --env dev`, which uploads to S3; that triggers the load. Check `/aws/lambda/afs-dev-load` logs.
+  5. `uv run python scripts/deploy_site.py --env dev`, then open the `site_url` output.
   Session end: `terraform -chdir=infra/envs/dev destroy`. The bootstrap stacks stay.
 - **prod**: full backfill, weekly schedule, deletion protection, 7-day backups, flow logs.
 - Bootstrap (applied by hand, never by CI; done for both accounts 2026-10-08): `infra/modules/bootstrap` + thin roots `infra/bootstrap/{dev,prod}`. Each creates:
@@ -149,8 +150,23 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
 - `ingest`: raw bucket `afs-<env>-raw-<account_id>` (versioned, TLS-only; `force_destroy` in dev). It holds the fetch Lambda (outside the VPC; `ssm:GetParameter` on the token, `s3:PutObject` on `raw/*`), the load Lambda (in the VPC; `s3:GetObject` on `raw/*`, `rds-db:connect` as afs_loader), the S3 notification (ObjectCreated, `raw/` + `.json.gz`) with an `aws_lambda_permission`, and an optional EventBridge Scheduler (`schedule_enabled`; Wednesdays 07:00 America/Chicago, the day after the city's Tuesday publishes). The dev settings are `since_days = 90` and no schedule; trigger a fetch with `uv run afs remote-fetch --env dev`.
 - Gotcha: static RDS parameters (e.g. `rds.force_ssl`) need `apply_method = "pending-reboot"` in config, or every plan shows a diff.
 - `api`: HTTP API (payload format 2.0, `$default` stage, auto-deploy) with three `GET /api/...` routes going to **one** query Lambda (in the VPC, `afs_reader`, 512 MB, 10 s). No CORS config (same-origin via CloudFront). Stage throttling is 20 rps with bursts of 40. JSON access logs go to `/aws/apigateway/<name>` (14 days).
-- `frontend` (Phase 4): site bucket, OAC, CloudFront with the S3 + `/api/*` origins, response headers policy. Optional `domain` input: when set (prod), it also creates the ACM cert, aliases, and Route 53 records in the delegated zone.
+- `frontend`: site bucket, OAC, CloudFront with the S3 + `/api/*` origins, response headers policy (CSP from `infra/modules/frontend/csp.txt`). Optional `domain` input: when set (prod), it also creates the ACM cert, aliases, and Route 53 records in the delegated zone. There's no `custom_error_response`: it would apply to the API origin too and turn JSON 404s into HTML.
+- Gotcha: the managed cache policy `UseOriginCacheControlHeaders-QueryStrings` (no `Managed-` prefix) keys on, and so forwards, **`Host`** (API Gateway rejects that) and on all cookies. We use our own `aws_cloudfront_cache_policy.api` instead: query strings only, gzip/brotli on, `default_ttl 0`, `max_ttl 3600`. Headers in a cache key are always sent to the origin, whatever the origin request policy says.
 - `infra/dns`: see Hosting and DNS.
+
+## Frontend
+
+- `frontend/`: plain HTML/CSS + one ES module (`app.js`). No build step and no npm. Leaflet 1.9.4 and leaflet.markercluster 1.5.3 are **vendored** under `frontend/vendor/<lib>-<version>/`, downloaded from npm tarballs and checked against the registry's sha512 integrity hash.
+- The API base is the relative `/api` (same origin everywhere), so there's no per-env config.
+- Loads all establishments once (one cacheable URL) and filters in the browser: band checkboxes (incl. "no score"), and ZIP.
+- Clusters are **donuts** showing the band mix (inline SVG built only from computed numbers; colors via CSS classes). "Worst band wins" made the city look mostly failing.
+- Side panel (a bottom sheet under 720px) shows an establishment's detail (badge, delta, trend text, facts, hand-built SVG chart, history table) or the Decliners list. Hash routes are `#/establishment/<id>` and `#/decliners`, so views are linkable and work with the back button.
+- **XSS rule:** API data is inserted only via `textContent`/`setAttribute` (the `el()` helper), never `innerHTML`. Exception: cluster icon HTML, which contains only numbers.
+- **CSP** (`infra/modules/frontend/csp.txt`, the single source for CloudFront and `afs serve`): `script-src 'self'`, `style-src 'self'` (no inline `style` attributes; setting `element.style` from JS is fine), `img-src 'self' data: https://tile.openstreetmap.org`, `connect-src 'self'`, `frame-ancestors 'none'`. No `upgrade-insecure-requests`: CloudFront already redirects to HTTPS, and the directive breaks `http://localhost`.
+- Dates from the API are `YYYY-MM-DD`; parse them as local dates (`parseDate`), never `new Date(iso)` (that's UTC midnight, the previous evening in Austin).
+- Local: `uv run afs serve` → http://localhost:8001 serves `frontend/` + `/api` with the CSP header (path-traversal guarded; `.js` MIME pinned because the Windows registry can say `text/plain`).
+- Deploy: `uv run python scripts/deploy_site.py --env dev` reads bucket and distribution from Terraform outputs, uploads with Cache-Control (`index.html` no-cache, `vendor/` 1 year immutable, the rest 5 min), deletes stale keys, and invalidates `/*`.
+- Verified in dev (2026-10-09): API through CloudFront goes Miss 3.0 s → Hit 0.26 s; there are no console/CSP errors in Chrome; the bucket returns 403 directly.
 
 ## Read API
 
@@ -182,9 +198,9 @@ src/afs/migrations/NNN_*.sql   numbered, append-only; applied by db.migrate()
 src/afs/api.py         read API: param parsing, queries, GeoJSON shaping, route(); transport-agnostic
 src/afs/handlers/      Lambda entry points: migrate, fetch, load, query
 src/afs/cli.py         `uv run afs migrate|fetch|load|serve|remote-migrate|remote-fetch`
-scripts/build_lambda.py
+scripts/build_lambda.py, scripts/deploy_site.py
 tests/                 pytest (unit + integration against docker Postgres)
-frontend/              index.html, app.js
+frontend/              index.html, styles.css, app.js, vendor/ (Leaflet, markercluster)
 infra/bootstrap/{dev,prod}, infra/dns, infra/modules/*, infra/envs/{dev,prod}
 .github/workflows/
 ```
@@ -194,7 +210,7 @@ infra/bootstrap/{dev,prod}, infra/dns, infra/modules/*, infra/envs/{dev,prod}
 1. ✅ Local ETL against docker Postgres (schema, transforms + tests, Socrata client, metrics, CLI).
 2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
 3. ✅ API (dev, verified 2026-10-09).
-4. Frontend. (✅ DNS delegation for austinfood.travispollard.com done.)
+4. ✅ Frontend (dev, verified 2026-10-09) and DNS delegation for austinfood.travispollard.com.
 5. Prod (live at austinfood.travispollard.com) + CI.
 
 ## Windows notes

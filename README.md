@@ -32,6 +32,7 @@ uv sync
 uv run afs migrate              # apply schema migrations
 uv run afs fetch                # full snapshot -> data/raw/YYYY-MM-DD/*.json.gz
 uv run afs load data/raw/<date>/<file>.json.gz
+uv run afs serve                # map + API at http://localhost:8001
 uv run pytest                   # unit + integration tests
 ```
 

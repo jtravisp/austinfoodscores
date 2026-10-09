@@ -92,6 +92,27 @@ module "api" {
   dbuser_arn_prefix        = module.database.dbuser_arn_prefix
 }
 
+# Dev: no custom domain; the site is served from its *.cloudfront.net name.
+module "frontend" {
+  source = "../../modules/frontend"
+
+  name          = local.name
+  api_endpoint  = module.api.endpoint
+  force_destroy = true
+}
+
+output "site_url" {
+  value = module.frontend.url
+}
+
+output "site_bucket" {
+  value = module.frontend.site_bucket
+}
+
+output "distribution_id" {
+  value = module.frontend.distribution_id
+}
+
 output "api_endpoint" {
   value = module.api.endpoint
 }
