@@ -26,3 +26,25 @@ def test_s3_objects_empty_event():
     from afs.handlers.load import s3_objects
 
     assert s3_objects({}) == []
+
+
+def test_query_response_gzipped_when_accepted():
+    import base64
+    import gzip
+
+    from afs.handlers.query import encode_response
+
+    text = '{"features":[' + ",".join(['{"x":1}'] * 500) + "]}"
+    resp = encode_response(200, {"content-type": "application/json"}, text, {"accept-encoding": "gzip, deflate, br"})
+
+    assert resp["isBase64Encoded"] is True
+    assert resp["headers"]["content-encoding"] == "gzip"
+    assert gzip.decompress(base64.b64decode(resp["body"])).decode() == text
+
+
+def test_query_response_plain_when_small_or_not_accepted():
+    from afs.handlers.query import encode_response
+
+    big = "x" * 5000
+    assert "isBase64Encoded" not in encode_response(200, {}, big, {})
+    assert "isBase64Encoded" not in encode_response(200, {}, "{}", {"accept-encoding": "gzip"})

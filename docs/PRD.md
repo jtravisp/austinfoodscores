@@ -38,9 +38,11 @@ Austin Public Health publishes food establishment inspection scores (Socrata dat
 ### API
 | Endpoint | Returns |
 |---|---|
-| `GET /establishments?bbox=&band=&zip=` | GeoJSON FeatureCollection with latest-score metrics per feature |
-| `GET /establishments/{facility_id}` | Establishment details and full inspection history |
-| `GET /stats/decliners` | Ranked list of declining establishments |
+| `GET /establishments?bbox=&band=&zip=` | GeoJSON FeatureCollection; one Point feature per establishment with coordinates. `bbox` = `west,south,east,north` (Leaflet order); `band` = comma list of `green,yellow,red`; `zip` = 5 digits. Properties: `facility_id, name, address, zip5, latest_score, latest_band, trend, score_delta, days_since_last`. |
+| `GET /establishments/{facility_id}` | All metrics, plus `history` (`id, inspected_on, score, band, process`, newest first). 404 if unknown. |
+| `GET /stats/decliners?limit=&zip=` | `{min_drop, window_days, decliners: [...]}`, worst drop first. `limit` 1–100 (default 25). |
+
+Errors: 400 `{"error": "..."}` for invalid parameters. Responses are gzipped when the client accepts it and cacheable for 5 minutes.
 
 ### Ingest
 - Weekly scheduled pull in prod; manual trigger in dev (90-day slice).

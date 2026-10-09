@@ -81,6 +81,21 @@ module "ingest" {
   schedule_enabled = false
 }
 
+module "api" {
+  source = "../../modules/api"
+
+  name                     = local.name
+  lambda_zip               = local.lambda_zip
+  subnet_ids               = module.network.private_subnet_ids
+  lambda_security_group_id = module.network.lambda_security_group_id
+  connection_env           = module.database.connection_env
+  dbuser_arn_prefix        = module.database.dbuser_arn_prefix
+}
+
+output "api_endpoint" {
+  value = module.api.endpoint
+}
+
 output "raw_bucket" {
   value = module.ingest.raw_bucket
 }

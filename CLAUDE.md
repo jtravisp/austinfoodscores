@@ -134,7 +134,16 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
 - `lambda_function`: helper used for every Lambda. It creates the function plus its own IAM role and log group (14-day retention). Inputs: optional `vpc`, optional `policy_json`. All functions share `build/lambda.zip` and differ only by `handler`.
 - `ingest`: raw bucket `afs-<env>-raw-<account_id>` (versioned, TLS-only; `force_destroy` in dev). It holds the fetch Lambda (outside the VPC; `ssm:GetParameter` on the token, `s3:PutObject` on `raw/*`), the load Lambda (in the VPC; `s3:GetObject` on `raw/*`, `rds-db:connect` as afs_loader), the S3 notification (ObjectCreated, `raw/` + `.json.gz`) with an `aws_lambda_permission`, and an optional EventBridge Scheduler (`schedule_enabled`; Wednesdays 07:00 America/Chicago, the day after the city's Tuesday publishes). The dev settings are `since_days = 90` and no schedule; trigger a fetch with `uv run afs remote-fetch --env dev`.
 - Gotcha: static RDS parameters (e.g. `rds.force_ssl`) need `apply_method = "pending-reboot"` in config, or every plan shows a diff.
-- `api`, `frontend`: to come.
+- `api`: HTTP API (payload format 2.0, `$default` stage, auto-deploy) with three `GET` routes going to **one** query Lambda (in the VPC, `afs_reader`, 512 MB, 10 s). CORS is handled by API Gateway (`cors_allow_origins`; `["*"]` until Phase 4 narrows it to CloudFront + `http://localhost:8000`). Stage throttling is 20 rps with bursts of 40. JSON access logs go to `/aws/apigateway/<name>` (14 days).
+- `frontend`: to come.
+
+## Read API
+
+- Contract (details in `docs/PRD.md`): `GET /establishments?bbox=w,s,e,n&band=green,yellow&zip=78704` (GeoJSON, excludes no-coords), `GET /establishments/{facility_id}` (metrics + history, 404 if unknown), `GET /stats/decliners?limit=25&zip=` (≤100). Bad params return 400 `{"error": ...}`.
+- `api.route(conn, route_key, query, path)` is the single implementation. The Lambda handler (`handlers/query.py`) and `uv run afs serve` (local, **port 8001**; 8080 is taken by another app on the dev machine) are thin adapters.
+- The query Lambda reuses its DB connection across warm invocations and reconnects once on `OperationalError`.
+- **HTTP APIs don't compress**, so the query Lambda gzips bodies ≥1 KB when the client sends `Accept-Encoding: gzip` (base64 + `isBase64Encoded`). The full map is ~2 MB → ~250 KB. Responses get `Cache-Control: public, max-age=300` and `Vary: accept-encoding`.
+- Measured (dev): cold start ≈ 0.6 s init + 1.7 s first request (IAM token + TLS + auth); warm ≈ 40 ms for the full GeoJSON, 2–20 ms for small queries.
 
 ## Python
 
@@ -155,8 +164,9 @@ src/afs/pipeline.py    orchestration shared by CLI and Lambda; storage left to c
 src/afs/db.py          connections (local DSN or IAM), migrations, role bootstrap, upserts
 src/afs/bootstrap_roles.sql, certs/rds-global-bundle.pem
 src/afs/migrations/NNN_*.sql   numbered, append-only; applied by db.migrate()
-src/afs/handlers/      Lambda entry points: migrate, fetch, load (query to come)
-src/afs/cli.py         `uv run afs migrate|fetch|load|remote-migrate|remote-fetch`
+src/afs/api.py         read API: param parsing, queries, GeoJSON shaping, route(); transport-agnostic
+src/afs/handlers/      Lambda entry points: migrate, fetch, load, query
+src/afs/cli.py         `uv run afs migrate|fetch|load|serve|remote-migrate|remote-fetch`
 scripts/build_lambda.py
 tests/                 pytest (unit + integration against docker Postgres)
 frontend/              index.html, app.js
@@ -168,7 +178,7 @@ infra/bootstrap/{dev,prod}, infra/modules/*, infra/envs/{dev,prod}
 
 1. ✅ Local ETL against docker Postgres (schema, transforms + tests, Socrata client, metrics, CLI).
 2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
-3. API.
+3. ✅ API (dev, verified 2026-10-09).
 4. Frontend.
 5. Prod + CI.
 
