@@ -9,6 +9,10 @@ name: deploy
 on:
   push:
     branches: [main]
+    # Docs-only merges don't need a prod plan waiting on an approval.
+    paths-ignore:
+      - "**.md"
+      - "docs/**"
   workflow_dispatch:
 
 permissions:
