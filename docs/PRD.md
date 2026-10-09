@@ -57,25 +57,28 @@ Austin Public Health publishes food establishment inspection scores (Socrata dat
 
 ## Decisions from data profiling (2026-10-08)
 
-- The source republishes every row each time, so ingest pulls a full snapshot and skips the run when the dataset's `rowsUpdatedAt` hasn't changed.
-- Inspections with no score (48 rows) are kept with a NULL score and excluded from metrics.
+- The source republishes every row each time, so ingest pulls a full snapshot. The load skips a run when the snapshot's watermark (`dataUpdatedAt`) and query match a previous successful run.
+- Inspections with no score (48 rows) **or a score of 0** (7 rows, placeholders such as 100 > 0 > 0) are kept as visits with a NULL score and excluded from metrics.
 - Follow-up inspections (103 rows, 0.5%) count toward trends.
 - Score band is derived from the score, not taken from the source text.
 - Facilities without coordinates (202) are stored but not shown on the map.
 - Metrics are computed in a SQL view.
+- Bad rows are skipped and recorded; a load fails if more than 1% of rows are rejected.
 
-## Metric definitions (proposed; to be finalized in Phase 1)
+## Metric definitions (finalized 2026-10-08 against real data)
 
-Computed per establishment over its inspections ordered by date:
+Computed per establishment over its **scored** inspections, newest first (same-day ties broken by inspection id). "Today" is the date in Austin (America/Chicago).
 
 | Metric | Definition |
 |---|---|
-| Latest score | Score of the most recent inspection |
-| Score delta | Latest score − previous score (null if only one inspection) |
-| Trend (last 3) | `improving` / `declining` / `stable` based on the sign of the least-squares slope over the last 3 scores, with a ±1 point/inspection dead band |
-| Inspections under 80 | Count of all inspections with score < 80 |
-| Days since last | Today − latest inspection date |
-| Decliner | Score delta ≤ −10 with latest inspection in the last 180 days, ranked by delta |
+| Latest score / band | Score and band of the most recent scored inspection |
+| Score delta | Latest score − previous scored inspection (null with fewer than 2) |
+| Trend | Least-squares slope over the last 3 scored inspections, in points per inspection: > +3 `improving`, < −3 `declining`, otherwise `stable`. Null ("not enough history") with fewer than 3. |
+| Inspections under 80 | Count of all scored inspections below 80 |
+| Days since last | Austin today − most recent inspection date (scored or not) |
+| Decliner | Score delta ≤ −10 and latest scored inspection within the last 180 days, ranked by delta |
+
+Snapshot as of 2026-10-08: trend is stable for 2,987 establishments, declining for 478, improving for 430, and null for 2,590 (fewer than 3 inspections). There are 114 decliners, almost all of which dropped out of the green band. The median time between inspections is about 200 days.
 
 ## Non-functional requirements
 

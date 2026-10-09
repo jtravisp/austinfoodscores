@@ -47,7 +47,10 @@ Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `
 - All upserts idempotent (`INSERT ... ON CONFLICT`). Loading the same file twice must not change row counts.
 - Schema changes: numbered SQL files in `src/afs/migrations/`, never edit an applied one; add a new file. No ORM.
 - `inspections.band` is a generated column derived from score (`green` ≥90, `yellow` 70–89, `red` <70, NULL if no score). The source's band text is ignored (it has stray whitespace).
-- `inspections.score` is nullable (48 source rows have none); metrics ignore NULLs. Follow-up inspections count toward metrics.
+- `inspections.score` is nullable: missing scores **and scores of 0** (placeholders in the source) become NULL in `transform.to_score`. Metrics ignore NULLs. Follow-up inspections count toward metrics.
+- Metric definitions (trend dead band ±3, decliner rule) are in `docs/PRD.md`. The view is `establishment_metrics`; `trend_label()` and `austin_today()` are SQL functions. Business dates use America/Chicago, never `CURRENT_DATE` (the DB runs in UTC).
+- psycopg connections use `autocommit=True`; transactions are explicit `with conn.transaction():` blocks.
+- Integration tests use a separate `afs_test` database (created by `tests/conftest.py`) and are skipped if Postgres isn't running.
 - Establishments without coordinates are stored (lat/lon NULL), excluded from map GeoJSON. Upserts must not overwrite known coords with NULL.
 - `first_seen`/`last_seen` are ingest-run dates, not inspection dates.
 

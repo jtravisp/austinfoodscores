@@ -72,8 +72,8 @@ def test_to_score_parses_socrata_decimal():
     assert to_score("96.000000") == 96
 
 
-def test_to_score_zero_is_a_real_score():
-    assert to_score("0.000000") == 0
+def test_to_score_zero_means_no_score():
+    assert to_score("0.000000") is None
 
 
 def test_to_score_missing_is_none():

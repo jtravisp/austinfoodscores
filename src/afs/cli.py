@@ -5,7 +5,7 @@ import os
 from datetime import date, timedelta
 from pathlib import Path
 
-from afs import db, pipeline
+from afs import db, pipeline, snapshot
 
 
 def cmd_migrate(args: argparse.Namespace) -> None:
@@ -28,6 +28,17 @@ def cmd_fetch(args: argparse.Namespace) -> None:
     print(f"wrote {path}: {envelope['row_count']} rows, {len(data) / 1e6:.1f} MB, watermark {envelope['watermark']}")
 
 
+def cmd_load(args: argparse.Namespace) -> None:
+    path = Path(args.path)
+    envelope = snapshot.decode(path.read_bytes())
+    with db.connect() as conn:
+        result = pipeline.load_snapshot(conn, envelope, source_uri=path.as_posix(), force=args.force)
+    print(
+        f"run {result.run_id} {result.status}: "
+        f"{result.rows_upserted} inspections new or changed, {result.rows_rejected} rejected"
+    )
+
+
 def main() -> None:
     try:
         from dotenv import load_dotenv  # dev-only dependency; absent in Lambda
@@ -43,6 +54,11 @@ def main() -> None:
     fetch.add_argument("--since-days", type=int, help="only inspections from the last N days (dev uses 90)")
     fetch.add_argument("--out", default="data", help="output root (default: data)")
     fetch.set_defaults(func=cmd_fetch)
+
+    load = sub.add_parser("load", help="load a snapshot file into the database")
+    load.add_argument("path", help="a data/raw/.../*.json.gz snapshot")
+    load.add_argument("--force", action="store_true", help="load even if this watermark+query already succeeded")
+    load.set_defaults(func=cmd_load)
 
     args = parser.parse_args()
     args.func(args)

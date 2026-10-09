@@ -61,13 +61,18 @@ def to_zip5(value: str | None) -> str | None:
 
 
 def to_score(value: str | None) -> int | None:
-    """'96.000000' -> 96. Missing -> None. Fractional or out of 0-100 -> RejectedRow."""
+    """'96.000000' -> 96. Missing or 0 -> None. Fractional or out of 0-100 -> RejectedRow.
+
+    0 is treated as "no score recorded": the source's handful of zeros sit
+    between normal 95-100 scores (e.g. 100 > 0 > 0), and real failing
+    inspections bottom out in the 60s.
+    """
     if value is None or value.strip() == "":
         return None
     number = float(value)
     if not number.is_integer() or not 0 <= number <= 100:
         raise RejectedRow(f"invalid score {value!r}")
-    return int(number)
+    return int(number) or None
 
 
 def to_coord(value: str | None) -> float | None:

@@ -18,6 +18,22 @@ CloudFront + S3 (Leaflet map) → API Gateway (HTTP) → query Lambda (VPC) ┘
 - **Terraform**: reusable modules plus separate `dev` and `prod` root modules, deployed to separate AWS accounts.
 - **CI/CD**: GitHub Actions with AWS OIDC. Plan on PR, auto-deploy dev, manually approved prod.
 
+## Run locally
+
+Requires Docker and [uv](https://docs.astral.sh/uv/).
+
+```
+cp .env.example .env            # then add your Socrata app token
+docker compose up -d --wait     # Postgres 17 on localhost:5432
+uv sync
+uv run afs migrate              # apply schema migrations
+uv run afs fetch                # full snapshot -> data/raw/YYYY-MM-DD/*.json.gz
+uv run afs load data/raw/<date>/<file>.json.gz
+uv run pytest                   # unit + integration tests
+```
+
+Then explore: `docker compose exec db psql -U afs -d afs -c "SELECT * FROM establishment_metrics LIMIT 5"`.
+
 ## Docs
 
 - [Product requirements](docs/PRD.md)

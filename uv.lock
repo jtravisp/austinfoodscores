@@ -14,6 +14,7 @@ dependencies = [
 dev = [
     { name = "pytest" },
     { name = "python-dotenv" },
+    { name = "tzdata" },
 ]
 
 [package.metadata]
@@ -23,6 +24,7 @@ requires-dist = [{ name = "psycopg", extras = ["binary"], specifier = ">=3.2" }]
 dev = [
     { name = "pytest", specifier = ">=8" },
     { name = "python-dotenv", specifier = ">=1.0" },
+    { name = "tzdata", specifier = ">=2026.5" },
 ]
 
 [[package]]
