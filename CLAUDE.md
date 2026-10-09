@@ -1,0 +1,90 @@
+# austinfoodscores
+
+Portfolio project: a web map of Travis County food establishments showing each one's latest health inspection score and its trend over time. Built to practice AWS, Terraform, and Python for a cloud engineering assessment.
+
+## Working agreement
+
+- The owner wants to understand every piece. Explain decisions as you go; build one phase at a time.
+- At the end of each phase: list what to verify and which AWS/Terraform concepts it exercised.
+- Commit messages: brief and to the point.
+- Repo: github.com/jtravisp/austinfoodscores (public).
+
+## Why ingest instead of querying live
+
+The source keeps only a rolling ~3 years. Our database accumulates history beyond that window, which enables long-term trends. The city already publishes a live map of the same data (Socrata view `xqww-eh98`, "Food Establishment Inspection Score Map"); our differentiator is history, trends, and decliners.
+
+## Source data
+
+City of Austin Socrata dataset `ecmv-9xxi` ("Food Establishment Inspection Scores"), data.austintexas.gov.
+- One row per inspection. ~20.5k rows, ~6.5k facilities (as of 2026-10). Fits in one 50k-row page, but always page.
+- Publisher updates bi-weekly (Tuesdays). We ingest weekly (prod) — cheap and never misses a batch.
+- SODA3 requires an app token, stored as an SSM Parameter Store SecureString per env.
+
+| API field | Type | Maps to | Notes |
+|---|---|---|---|
+| `inspectionid` | number | `inspections.id` | Verified unique across all rows |
+| `facility_id` | number | `establishments.facility_id` | Source system FOLDERRSN |
+| `restaurant_name` | text | `name` | Decode HTML entities (`&#39;`) |
+| `address` | text | `address` | Collapse doubled whitespace |
+| `zip_code` | text | `zip5` | Mix of 5-digit and ZIP+4 |
+| `inspection_date` | floating timestamp | `inspected_on` | Date only |
+| `score` | number | `score` | |
+| `process_description` | text | `process` | e.g. "Routine Inspection" |
+| `inspectionscorecategory` | text | `band` | e.g. "90+ (Green)", "70-89 (Yellow)" |
+| `lat`, `lng` | number | `lat`, `lon` | |
+| `georeferenct` | point | — | Ignored; duplicates lat/lng |
+
+Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `BC -`, `VV -` mark other jurisdictions. Includes schools, hospitals, churches, daycares. No category field.
+
+## Data model (Postgres)
+
+- `establishments(facility_id PK, name, address, zip5, lat, lon, first_seen, last_seen)`
+- `inspections(id PK, facility_id FK, inspected_on, score, process, band)`
+- `ingest_runs(id, started_at, finished_at, watermark, rows_upserted, status)`
+- Derived per-establishment metrics: latest score, trend over last 3 inspections, score delta, count of inspections under 80, days since last inspection.
+- All upserts idempotent (`INSERT ... ON CONFLICT`). Loading the same file twice must not change row counts.
+
+## Architecture (no NAT gateway; minimize cost)
+
+- EventBridge schedule (weekly, prod only) → **fetch Lambda** (outside VPC) pulls Socrata, writes raw JSON to `s3://.../raw/YYYY-MM-DD/...`.
+- S3 event → **load Lambda** (in VPC, private subnets) cleans, transforms, upserts to RDS. Reaches S3 via gateway endpoint; IAM database auth to RDS.
+- API Gateway HTTP API → **query Lambda** (in VPC, IAM DB auth) → RDS. Endpoints: `/establishments` (GeoJSON; filter by bbox, band, zip), `/establishments/{facility_id}` (history), `/stats/decliners`. CORS on the API.
+- Frontend: plain HTML/JS, Leaflet + OSM tiles + leaflet.markercluster, on S3 + CloudFront (OAC).
+- RDS Postgres `db.t4g.micro`, private, single-AZ. Prod: deletion protection, backups, CloudWatch alarms → SNS.
+- Open decision (Phase 2): how to run DDL / `GRANT rds_iam` with master creds from inside a VPC with no NAT and no Secrets Manager endpoint.
+
+## Environments and accounts
+
+- One AWS account per environment, under the owner's existing AWS Organization: `afs-dev`, `afs-prod`. Access via IAM Identity Center profiles.
+- **local**: docker compose Postgres; run the Python ETL locally.
+- **dev**: 90-day data slice, ingest on manual trigger, small, teardown-friendly.
+- **prod**: full backfill, weekly schedule, deletion protection.
+- Terraform: `infra/bootstrap/` (applied once per account: state bucket, GitHub OIDC provider, deploy role); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
+- CI: GitHub Actions with AWS OIDC. Plan on PR, auto-apply dev on merge to main, manual approval (GitHub `production` environment) before prod.
+
+## Python
+
+- Python 3.12, uv for deps, pytest for unit tests.
+- Transform/cleaning logic lives in pure functions (`src/afs/transform.py`, `metrics.py`), separate from Lambda handlers (`src/afs/handlers/`), so it is testable locally.
+- Lambda runtime: python3.12 on **arm64**.
+- psycopg packaging: **zip with manylinux wheels** (`psycopg[binary]` bundles libpq), built with `uv pip install --target build/ --python-platform aarch64-manylinux2014 --only-binary=:all:`. Chosen over a container image: ~5 MB dependency doesn't justify ECR, Docker builds in CI, and slower cold starts.
+
+## Repo layout
+
+```
+docker-compose.yml, pyproject.toml, uv.lock
+src/afs/{transform,metrics,socrata,db}.py, schema.sql, handlers/{fetch,load,query}.py
+scripts/        local CLI (fetch → file, load file → local PG)
+tests/          pytest
+frontend/       index.html, app.js
+infra/bootstrap, infra/modules/*, infra/envs/{dev,prod}
+.github/workflows/
+```
+
+## Build phases
+
+1. Local ETL against docker Postgres (schema, transforms + tests, Socrata client, metrics, CLI).
+2. Dev infra: bootstrap, network, database, ingest.
+3. API.
+4. Frontend.
+5. Prod + CI.
