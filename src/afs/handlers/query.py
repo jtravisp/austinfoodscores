@@ -2,7 +2,8 @@
 
 Connects as afs_reader. The connection is opened once per execution
 environment and reused by later invocations ("warm" starts), reconnecting
-if it has dropped. CORS headers are added by API Gateway, not here.
+if it has dropped. No CORS headers: browsers reach the API through the
+site's CloudFront distribution under /api/*, i.e. the same origin.
 """
 
 import base64

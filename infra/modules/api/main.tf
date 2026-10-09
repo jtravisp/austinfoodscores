@@ -36,19 +36,15 @@ module "query" {
   })
 }
 
-# HTTP API (v2): cheaper and simpler than REST APIs, with built-in CORS handling.
+# HTTP API (v2): cheaper and simpler than REST APIs.
+#
+# No CORS configuration: the browser reaches this API through the site's own
+# CloudFront distribution under /api/*, so page and API share one origin and
+# the browser never makes a cross-origin request. Routes therefore carry the
+# /api prefix themselves; CloudFront forwards the path unchanged.
 resource "aws_apigatewayv2_api" "this" {
   name          = var.name
   protocol_type = "HTTP"
-
-  # API Gateway answers CORS preflight (OPTIONS) requests itself and adds the
-  # Access-Control-* headers to responses; the Lambda doesn't deal with CORS.
-  cors_configuration {
-    allow_origins = var.cors_allow_origins
-    allow_methods = ["GET"]
-    allow_headers = ["content-type"]
-    max_age       = 3600
-  }
 }
 
 # AWS_PROXY: the whole request goes to Lambda as an event and its return value
@@ -62,9 +58,9 @@ resource "aws_apigatewayv2_integration" "query" {
 
 resource "aws_apigatewayv2_route" "this" {
   for_each = toset([
-    "GET /establishments",
-    "GET /establishments/{facility_id}",
-    "GET /stats/decliners",
+    "GET /api/establishments",
+    "GET /api/establishments/{facility_id}",
+    "GET /api/stats/decliners",
   ])
 
   api_id    = aws_apigatewayv2_api.this.id

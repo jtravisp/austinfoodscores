@@ -86,9 +86,9 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
 
 - EventBridge schedule (weekly, prod only) → **fetch Lambda** (outside VPC) pulls Socrata, writes raw JSON to `s3://.../raw/YYYY-MM-DD/...`.
 - S3 event → **load Lambda** (in VPC, private subnets) cleans, transforms, upserts to RDS. Reaches S3 via gateway endpoint; IAM database auth to RDS.
-- API Gateway HTTP API → **query Lambda** (in VPC, IAM DB auth) → RDS. Endpoints: `/establishments` (GeoJSON; filter by bbox, band, zip), `/establishments/{facility_id}` (history), `/stats/decliners`. CORS on the API.
+- API Gateway HTTP API → **query Lambda** (in VPC, IAM DB auth) → RDS. Endpoints: `/api/establishments` (GeoJSON; filter by bbox, band, zip), `/api/establishments/{facility_id}` (history), `/api/stats/decliners`. **No CORS:** browsers reach the API through the site's CloudFront distribution (same origin).
 - **migrate Lambda** (in VPC): role bootstrap + migrations (see Database access).
-- Frontend: plain HTML/JS, Leaflet + OSM tiles + leaflet.markercluster, on S3 + CloudFront (OAC).
+- Frontend: plain HTML/JS, Leaflet + OSM tiles + leaflet.markercluster, on S3 + CloudFront (OAC). One distribution serves `/*` from S3 and `/api/*` from API Gateway (see Hosting and DNS).
 - Prod: deletion protection, backups, CloudWatch alarms → SNS, VPC flow logs.
 
 ### Network (`infra/modules/network`)
@@ -100,6 +100,20 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
   - `rds` SG ingress: 5432 from the `lambda` SG only.
   - The default SG is managed with no rules.
 - VPC flow logs: a module flag `flow_logs_enabled`. **On in prod** (CloudWatch, 30 days), off in dev.
+
+## Hosting and DNS
+
+Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod/site.tf`).
+
+- Prod URL: **https://austinfood.travispollard.com**. Dev uses its CloudFront default domain (`*.cloudfront.net`); dev has no custom domain and no DNS dependency.
+- **`infra/dns`** (hand-applied, never CI; state `dns/terraform.tfstate` in the prod bucket). It creates the hosted zone `austinfood.travispollard.com` in **afs-prod** ($0.50/mo), and writes the NS delegation record into the parent `travispollard.com` zone in account **679878703800** through an aliased `dns_parent` provider (CLI profile `tp-site`, its own SSO session: `aws sso login --sso-session tp-site`). Both providers pin `allowed_account_ids`. The parent repo (`../travispollard.com`) doesn't manage this record and won't remove it.
+- The prod frontend looks up the zone **by name** with a data source (no remote-state coupling). It creates the ACM cert (us-east-1, which CloudFront requires; DNS-validated in our own zone, `create_before_destroy`), the CloudFront aliases, and alias A/AAAA records.
+- **One CloudFront distribution per env, two origins:**
+  - default `/*` → private S3 site bucket via **OAC**. Use the REST endpoint, not S3 website hosting, so the bucket stays private. The bucket policy is scoped by `AWS:SourceArn` to this distribution.
+  - `/api/*` → the API Gateway endpoint. The path is forwarded unchanged, which is why API routes carry the `/api` prefix. Cache policy keys on query strings and honors the origin's `Cache-Control` (max-age=300). The origin request policy must **not** forward the viewer `Host` header (API Gateway rejects it): use `Managed-AllViewerExceptHostHeader`.
+  - `PriceClass_100`, TLS ≥ `TLSv1.2_2021`, `redirect-to-https`, `compress = true`. Custom response headers policy with CSP: `connect-src 'self'`, OSM tile host allowed in `img-src`, and scripts only from `'self'` (Leaflet vendored, not CDN-loaded).
+- The execute-api URL still works directly (throttled at 20 rps). The browser never uses it.
+- Phase 5 (CI): a separate least-privilege **web-deploy role** (sync one bucket, invalidate one distribution; `main` only), as in ncoer, rather than using the admin apply role.
 
 ## Environments and accounts
 
@@ -134,13 +148,14 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
 - `lambda_function`: helper used for every Lambda. It creates the function plus its own IAM role and log group (14-day retention). Inputs: optional `vpc`, optional `policy_json`. All functions share `build/lambda.zip` and differ only by `handler`.
 - `ingest`: raw bucket `afs-<env>-raw-<account_id>` (versioned, TLS-only; `force_destroy` in dev). It holds the fetch Lambda (outside the VPC; `ssm:GetParameter` on the token, `s3:PutObject` on `raw/*`), the load Lambda (in the VPC; `s3:GetObject` on `raw/*`, `rds-db:connect` as afs_loader), the S3 notification (ObjectCreated, `raw/` + `.json.gz`) with an `aws_lambda_permission`, and an optional EventBridge Scheduler (`schedule_enabled`; Wednesdays 07:00 America/Chicago, the day after the city's Tuesday publishes). The dev settings are `since_days = 90` and no schedule; trigger a fetch with `uv run afs remote-fetch --env dev`.
 - Gotcha: static RDS parameters (e.g. `rds.force_ssl`) need `apply_method = "pending-reboot"` in config, or every plan shows a diff.
-- `api`: HTTP API (payload format 2.0, `$default` stage, auto-deploy) with three `GET` routes going to **one** query Lambda (in the VPC, `afs_reader`, 512 MB, 10 s). CORS is handled by API Gateway (`cors_allow_origins`; `["*"]` until Phase 4 narrows it to CloudFront + `http://localhost:8000`). Stage throttling is 20 rps with bursts of 40. JSON access logs go to `/aws/apigateway/<name>` (14 days).
-- `frontend`: to come.
+- `api`: HTTP API (payload format 2.0, `$default` stage, auto-deploy) with three `GET /api/...` routes going to **one** query Lambda (in the VPC, `afs_reader`, 512 MB, 10 s). No CORS config (same-origin via CloudFront). Stage throttling is 20 rps with bursts of 40. JSON access logs go to `/aws/apigateway/<name>` (14 days).
+- `frontend` (Phase 4): site bucket, OAC, CloudFront with the S3 + `/api/*` origins, response headers policy. Optional `domain` input: when set (prod), it also creates the ACM cert, aliases, and Route 53 records in the delegated zone.
+- `infra/dns`: see Hosting and DNS.
 
 ## Read API
 
-- Contract (details in `docs/PRD.md`): `GET /establishments?bbox=w,s,e,n&band=green,yellow&zip=78704` (GeoJSON, excludes no-coords), `GET /establishments/{facility_id}` (metrics + history, 404 if unknown), `GET /stats/decliners?limit=25&zip=` (≤100). Bad params return 400 `{"error": ...}`.
-- `api.route(conn, route_key, query, path)` is the single implementation. The Lambda handler (`handlers/query.py`) and `uv run afs serve` (local, **port 8001**; 8080 is taken by another app on the dev machine) are thin adapters.
+- Contract (details in `docs/PRD.md`): `GET /api/establishments?bbox=w,s,e,n&band=green,yellow&zip=78704` (GeoJSON, excludes no-coords), `GET /api/establishments/{facility_id}` (metrics + history, 404 if unknown), `GET /api/stats/decliners?limit=25&zip=` (≤100). Bad params return 400 `{"error": ...}`. Route keys include the `/api` prefix.
+- `api.route(conn, route_key, query, path)` is the single implementation. The Lambda handler (`handlers/query.py`) and `uv run afs serve` (local, **port 8001**; 8080 is taken by qBittorrent on the dev machine) are thin adapters. In Phase 4, `afs serve` also serves `frontend/` at `/`, so local is same-origin like CloudFront.
 - The query Lambda reuses its DB connection across warm invocations and reconnects once on `OperationalError`.
 - **HTTP APIs don't compress**, so the query Lambda gzips bodies ≥1 KB when the client sends `Accept-Encoding: gzip` (base64 + `isBase64Encoded`). The full map is ~2 MB → ~250 KB. Responses get `Cache-Control: public, max-age=300` and `Vary: accept-encoding`.
 - Measured (dev): cold start ≈ 0.6 s init + 1.7 s first request (IAM token + TLS + auth); warm ≈ 40 ms for the full GeoJSON, 2–20 ms for small queries.
@@ -170,7 +185,7 @@ src/afs/cli.py         `uv run afs migrate|fetch|load|serve|remote-migrate|remot
 scripts/build_lambda.py
 tests/                 pytest (unit + integration against docker Postgres)
 frontend/              index.html, app.js
-infra/bootstrap/{dev,prod}, infra/modules/*, infra/envs/{dev,prod}
+infra/bootstrap/{dev,prod}, infra/dns, infra/modules/*, infra/envs/{dev,prod}
 .github/workflows/
 ```
 
@@ -179,8 +194,8 @@ infra/bootstrap/{dev,prod}, infra/modules/*, infra/envs/{dev,prod}
 1. ✅ Local ETL against docker Postgres (schema, transforms + tests, Socrata client, metrics, CLI).
 2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
 3. ✅ API (dev, verified 2026-10-09).
-4. Frontend.
-5. Prod + CI.
+4. Frontend (+ DNS delegation for austinfood.travispollard.com).
+5. Prod (live at austinfood.travispollard.com) + CI.
 
 ## Windows notes
 

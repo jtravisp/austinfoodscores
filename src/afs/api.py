@@ -158,7 +158,7 @@ def decliners(conn: psycopg.Connection, limit: int = DECLINERS_DEFAULT_LIMIT, zi
 def route(conn: psycopg.Connection, route_key: str, query: dict, path: dict) -> tuple[int, str, dict]:
     """Dispatch one request. Returns (status, content_type, body)."""
     try:
-        if route_key == "GET /establishments":
+        if route_key == "GET /api/establishments":
             body = establishments_geojson(
                 conn,
                 bbox=parse_bbox(query.get("bbox")),
@@ -166,12 +166,12 @@ def route(conn: psycopg.Connection, route_key: str, query: dict, path: dict) -> 
                 zip5=parse_zip(query.get("zip")),
             )
             return 200, "application/geo+json", body
-        if route_key == "GET /establishments/{facility_id}":
+        if route_key == "GET /api/establishments/{facility_id}":
             detail = establishment_detail(conn, parse_facility_id(path.get("facility_id")))
             if detail is None:
                 return 404, "application/json", {"error": "establishment not found"}
             return 200, "application/json", detail
-        if route_key == "GET /stats/decliners":
+        if route_key == "GET /api/stats/decliners":
             body = decliners(conn, limit=parse_limit(query.get("limit")), zip5=parse_zip(query.get("zip")))
             return 200, "application/json", body
     except BadRequest as exc:

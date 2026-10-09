@@ -4,6 +4,8 @@ A map of Travis County food establishment health inspections, showing each estab
 
 The City of Austin's [inspection dataset](https://data.austintexas.gov/Health-and-Community-Services/Food-Establishment-Inspection-Scores/ecmv-9xxi) and [map](https://data.austintexas.gov/Health-and-Community-Services/Food-Establishment-Inspection-Score-Map/xqww-eh98) only keep a rolling 3 years. This project ingests the data weekly and keeps the history, so trends and decliners outlive the source window.
 
+Live (once Phase 5 ships): **https://austinfood.travispollard.com**
+
 > Status: in progress. Building in phases; see [docs/PRD.md](docs/PRD.md).
 
 ## Architecture
@@ -11,10 +13,11 @@ The City of Austin's [inspection dataset](https://data.austintexas.gov/Health-an
 ```
 EventBridge (weekly) → fetch Lambda → S3 raw/ → load Lambda (VPC) → RDS Postgres
                                                                         ↑
-CloudFront + S3 (Leaflet map) → API Gateway (HTTP) → query Lambda (VPC) ┘
+austinfood.travispollard.com → CloudFront ─┬─ /*     → S3 (Leaflet map, OAC)
+                                           └─ /api/* → API Gateway → query Lambda (VPC) ┘
 ```
 
-- **AWS**: Lambda (Python 3.12, arm64), S3, RDS Postgres with IAM auth, API Gateway HTTP API, CloudFront with OAC, EventBridge, SSM Parameter Store, CloudWatch/SNS. No NAT gateway; the in-VPC Lambdas reach S3 through a gateway endpoint.
+- **AWS**: Lambda (Python 3.12, arm64), S3, RDS Postgres with IAM auth, API Gateway HTTP API, CloudFront with OAC, Route 53 (zone delegated cross-account from travispollard.com), ACM, EventBridge, SSM Parameter Store, CloudWatch/SNS. No NAT gateway; the in-VPC Lambdas reach S3 through a gateway endpoint.
 - **Terraform**: reusable modules plus separate `dev` and `prod` root modules, deployed to separate AWS accounts.
 - **CI/CD**: GitHub Actions with AWS OIDC. Plan on PR, auto-deploy dev, manually approved prod.
 

@@ -19,7 +19,8 @@ Austin Public Health publishes food establishment inspection scores (Socrata dat
 - Violation details (not in the source dataset).
 - Categorizing establishments (restaurant vs. school vs. hospital). The source has no category field.
 - User accounts, reviews, or any write path from the frontend.
-- Custom domain and HA/multi-AZ (possible later additions).
+- HA/multi-AZ (a possible later addition).
+- A custom domain for dev (dev uses AWS default domains; see Hosting).
 
 ## Users
 
@@ -38,9 +39,9 @@ Austin Public Health publishes food establishment inspection scores (Socrata dat
 ### API
 | Endpoint | Returns |
 |---|---|
-| `GET /establishments?bbox=&band=&zip=` | GeoJSON FeatureCollection; one Point feature per establishment with coordinates. `bbox` = `west,south,east,north` (Leaflet order); `band` = comma list of `green,yellow,red`; `zip` = 5 digits. Properties: `facility_id, name, address, zip5, latest_score, latest_band, trend, score_delta, days_since_last`. |
-| `GET /establishments/{facility_id}` | All metrics, plus `history` (`id, inspected_on, score, band, process`, newest first). 404 if unknown. |
-| `GET /stats/decliners?limit=&zip=` | `{min_drop, window_days, decliners: [...]}`, worst drop first. `limit` 1–100 (default 25). |
+| `GET /api/establishments?bbox=&band=&zip=` | GeoJSON FeatureCollection; one Point feature per establishment with coordinates. `bbox` = `west,south,east,north` (Leaflet order); `band` = comma list of `green,yellow,red`; `zip` = 5 digits. Properties: `facility_id, name, address, zip5, latest_score, latest_band, trend, score_delta, days_since_last`. |
+| `GET /api/establishments/{facility_id}` | All metrics, plus `history` (`id, inspected_on, score, band, process`, newest first). 404 if unknown. |
+| `GET /api/stats/decliners?limit=&zip=` | `{min_drop, window_days, decliners: [...]}`, worst drop first. `limit` 1–100 (default 25). |
 
 Errors: 400 `{"error": "..."}` for invalid parameters. Responses are gzipped when the client accepts it and cacheable for 5 minutes.
 
@@ -56,6 +57,12 @@ Errors: 400 `{"error": "..."}` for invalid parameters. Responses are gzipped whe
 - Normalize ZIP+4 to a 5-digit zip.
 - Collapse repeated whitespace in addresses.
 - Keep jurisdiction-prefixed names (`PF -`, `LW -`, `BC -`, `VV -`) as-is.
+
+### Hosting
+
+- Prod: **https://austinfood.travispollard.com**. The site and API share one origin: CloudFront serves the static map from S3 and forwards `/api/*` to API Gateway. There's no CORS, and API responses are cached at the edge.
+- Dev: the same layout on the distribution's default `*.cloudfront.net` domain. Dev is rebuilt each session, so its URL changes.
+- The domain is a zone delegated from `travispollard.com`, following the pattern used by ncoer.travispollard.com.
 
 ## Decisions from data profiling (2026-10-08)
 
@@ -101,8 +108,8 @@ Snapshot as of 2026-10-08: trend is stable for 2,987 establishments, declining f
 | 1 | Local ETL | Full dataset loads into docker Postgres; reload is a no-op; tests pass |
 | 2 | Dev infra + ingest | Manual fetch in dev lands raw JSON in S3 and rows in RDS |
 | 3 | API | All three endpoints return correct data from dev |
-| 4 | Frontend | Map served from CloudFront, working against the dev API |
-| 5 | Prod + CI | PR shows plan; merge deploys dev; approved run deploys prod; weekly ingest running |
+| 4 | Frontend | Map served from CloudFront (S3 + `/api/*` on one distribution) in dev; DNS delegation for austinfood.travispollard.com in place |
+| 5 | Prod + CI | Prod live at https://austinfood.travispollard.com; PR shows plan; merge deploys dev; approved run deploys prod; weekly ingest running |
 
 ## Open questions
 

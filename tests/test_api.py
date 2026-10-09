@@ -76,7 +76,7 @@ def call(conn, route_key, query=None, path=None):
 
 
 def test_establishments_geojson(seeded):
-    status, body = call(seeded, "GET /establishments")
+    status, body = call(seeded, "GET /api/establishments")
 
     assert status == 200
     assert body["type"] == "FeatureCollection"
@@ -99,17 +99,17 @@ def test_establishments_geojson(seeded):
     ],
 )
 def test_establishments_filters(seeded, query, expected):
-    _, body = call(seeded, "GET /establishments", query)
+    _, body = call(seeded, "GET /api/establishments", query)
     assert {f["id"] for f in body["features"]} == expected
 
 
 def test_establishments_bad_param_is_400(seeded):
-    status, body = call(seeded, "GET /establishments", {"bbox": "nope"})
+    status, body = call(seeded, "GET /api/establishments", {"bbox": "nope"})
     assert status == 400 and "bbox" in body["error"]
 
 
 def test_detail_includes_history_newest_first(seeded):
-    status, body = call(seeded, "GET /establishments/{facility_id}", path={"facility_id": "100"})
+    status, body = call(seeded, "GET /api/establishments/{facility_id}", path={"facility_id": "100"})
 
     assert status == 200
     assert body["name"] == "Place 100"
@@ -118,17 +118,17 @@ def test_detail_includes_history_newest_first(seeded):
 
 
 def test_detail_without_coordinates_still_works(seeded):
-    status, body = call(seeded, "GET /establishments/{facility_id}", path={"facility_id": "300"})
+    status, body = call(seeded, "GET /api/establishments/{facility_id}", path={"facility_id": "300"})
     assert status == 200 and body["lat"] is None
 
 
 def test_detail_unknown_is_404(seeded):
-    status, _ = call(seeded, "GET /establishments/{facility_id}", path={"facility_id": "999"})
+    status, _ = call(seeded, "GET /api/establishments/{facility_id}", path={"facility_id": "999"})
     assert status == 404
 
 
 def test_decliners(seeded):
-    status, body = call(seeded, "GET /stats/decliners")
+    status, body = call(seeded, "GET /api/stats/decliners")
 
     assert status == 200
     assert [d["facility_id"] for d in body["decliners"]] == [100]
@@ -137,5 +137,5 @@ def test_decliners(seeded):
 
 
 def test_unknown_route_is_404(seeded):
-    status, _ = call(seeded, "DELETE /establishments")
+    status, _ = call(seeded, "DELETE /api/establishments")
     assert status == 404

@@ -87,18 +87,18 @@ def cmd_serve(args: argparse.Namespace) -> None:
     from afs import api
 
     conn = db.connect()
-    detail = re.compile(r"^/establishments/([^/]+)$")
+    detail = re.compile(r"^/api/establishments/([^/]+)$")
 
     class Handler(BaseHTTPRequestHandler):
         def do_GET(self):
             url = urlsplit(self.path)
             query, path_params = dict(parse_qsl(url.query)), {}
-            if url.path == "/establishments":
-                route_key = "GET /establishments"
-            elif url.path == "/stats/decliners":
-                route_key = "GET /stats/decliners"
+            if url.path == "/api/establishments":
+                route_key = "GET /api/establishments"
+            elif url.path == "/api/stats/decliners":
+                route_key = "GET /api/stats/decliners"
             elif match := detail.match(url.path):
-                route_key, path_params = "GET /establishments/{facility_id}", {"facility_id": match.group(1)}
+                route_key, path_params = "GET /api/establishments/{facility_id}", {"facility_id": match.group(1)}
             else:
                 route_key = f"GET {url.path}"
 
@@ -106,7 +106,7 @@ def cmd_serve(args: argparse.Namespace) -> None:
             payload = api.to_json(body).encode()
             self.send_response(status)
             self.send_header("content-type", content_type)
-            self.send_header("access-control-allow-origin", "*")  # API Gateway's CORS config does this in AWS
+            self.send_header("access-control-allow-origin", "*")  # until serve also hosts the frontend (Phase 4)
             self.send_header("content-length", str(len(payload)))
             self.end_headers()
             self.wfile.write(payload)
