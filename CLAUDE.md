@@ -106,7 +106,7 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
 Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod/site.tf`).
 
 - Prod URL: **https://austinfood.travispollard.com**. Dev uses its CloudFront default domain (`*.cloudfront.net`); dev has no custom domain and no DNS dependency.
-- **`infra/dns`** (hand-applied, never CI; state `dns/terraform.tfstate` in the prod bucket). It creates the hosted zone `austinfood.travispollard.com` in **afs-prod** ($0.50/mo), and writes the NS delegation record into the parent `travispollard.com` zone in account **679878703800** through an aliased `dns_parent` provider (CLI profile `tp-site`, its own SSO session: `aws sso login --sso-session tp-site`). Both providers pin `allowed_account_ids`. The parent repo (`../travispollard.com`) doesn't manage this record and won't remove it.
+- **`infra/dns`** (hand-applied, never CI; state `dns/terraform.tfstate` in the prod bucket; **applied 2026-10-09**, zone `Z08182772IDLMR2LTIEC2`, delegation verified in public DNS). It creates the hosted zone `austinfood.travispollard.com` in **afs-prod** ($0.50/mo), and writes the NS delegation record into the parent `travispollard.com` zone in account **679878703800** through an aliased `dns_parent` provider (CLI profile `tp-site`, its own SSO session: `aws sso login --sso-session tp-site`). Both providers pin `allowed_account_ids`. The parent repo (`../travispollard.com`) doesn't manage this record and won't remove it.
 - The prod frontend looks up the zone **by name** with a data source (no remote-state coupling). It creates the ACM cert (us-east-1, which CloudFront requires; DNS-validated in our own zone, `create_before_destroy`), the CloudFront aliases, and alias A/AAAA records.
 - **One CloudFront distribution per env, two origins:**
   - default `/*` → private S3 site bucket via **OAC**. Use the REST endpoint, not S3 website hosting, so the bucket stays private. The bucket policy is scoped by `AWS:SourceArn` to this distribution.
@@ -194,7 +194,7 @@ infra/bootstrap/{dev,prod}, infra/dns, infra/modules/*, infra/envs/{dev,prod}
 1. ✅ Local ETL against docker Postgres (schema, transforms + tests, Socrata client, metrics, CLI).
 2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
 3. ✅ API (dev, verified 2026-10-09).
-4. Frontend (+ DNS delegation for austinfood.travispollard.com).
+4. Frontend. (✅ DNS delegation for austinfood.travispollard.com done.)
 5. Prod (live at austinfood.travispollard.com) + CI.
 
 ## Windows notes
