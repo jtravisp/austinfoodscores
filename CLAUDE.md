@@ -84,7 +84,15 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
 - **local**: docker compose Postgres; run the Python ETL locally.
 - **dev**: 90-day data slice, ingest on manual trigger, small, teardown-friendly.
 - **prod**: full backfill, weekly schedule, deletion protection.
-- Terraform: `infra/bootstrap/` (applied once per account: state bucket, GitHub OIDC provider, deploy role, imported budget); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
+- Bootstrap (applied by hand, never by CI; done for both accounts 2026-10-08): `infra/modules/bootstrap` + thin roots `infra/bootstrap/{dev,prod}`. Each creates:
+  - state bucket `afs-tfstate-<account_id>` (versioned, TLS-only, `prevent_destroy`); bootstrap's own state is at key `bootstrap/terraform.tfstate`
+  - the GitHub OIDC provider and two CI roles. `afs-<env>-github-plan` has ReadOnlyAccess plus write access to the `*.tflock` lock file, and trusts only `repo:jtravisp/austinfoodscores:pull_request`. `afs-<env>-github-apply` has AdministratorAccess, and trusts `ref:refs/heads/main` (dev) or `environment:production` (prod).
+  - the imported budget (an `import` block in the root)
+  - New account recipe: add a `local_override.tf` with `backend "local" {}`, apply, delete the override, then `terraform init -migrate-state`.
+  - Budget email lives in gitignored `budget.local.auto.tfvars`.
+- Providers pin `allowed_account_ids` so a misconfigured profile can't apply to the wrong account. Bootstrap roots hardcode `profile`; env roots must not (CI uses OIDC credentials), so locally set `AWS_PROFILE`.
+- Account IDs (dev 060516714585, prod 169406897968) appear in the repo. They are identifiers, not secrets.
+- Terraform: `infra/bootstrap/` (see above); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
 - CI: GitHub Actions with AWS OIDC. Plan on PR, auto-apply dev on merge to main, manual approval (GitHub `production` environment) before prod.
 
 ## Python

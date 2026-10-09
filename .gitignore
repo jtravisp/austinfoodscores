@@ -17,3 +17,5 @@ data/
 *.tfstate.*
 *.tfplan
 crash.log
+*.local.auto.tfvars
+.terraform.lock.hcl.bak
