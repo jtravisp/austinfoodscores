@@ -8,6 +8,8 @@
 
 /* global L */
 
+import { buildIndex, search } from "./search.js";
+
 const API = "/api";
 const AUSTIN = [30.29, -97.74];
 const BAND_LABEL = { green: "90+", yellow: "70–89", red: "under 70", none: "no score" };
@@ -101,6 +103,9 @@ function donutIcon(children) {
 
 const markers = new Map(); // facility_id -> L.Marker
 let features = [];
+let searchIndex = []; // normalized name/address per feature, built once at load
+let results = null; // current search matches (array), or null when not searching
+const MAX_RESULTS = 50;
 
 const filtersForm = document.getElementById("filters");
 const countEl = document.getElementById("count");
@@ -110,27 +115,71 @@ const panelBody = document.getElementById("panel-body");
 function currentFilters() {
   const data = new FormData(filtersForm);
   const zip = (data.get("zip") || "").trim();
-  return { bands: new Set(data.getAll("band")), zip: /^\d{5}$/.test(zip) ? zip : null };
+  return {
+    bands: new Set(data.getAll("band")),
+    zip: /^\d{5}$/.test(zip) ? zip : null,
+    q: (data.get("q") || "").trim(),
+  };
 }
 
+// Band, ZIP, and search are all filters: the map and the count show what passes
+// all three, and search results are drawn only from those.
 function applyFilters({ fit = false } = {}) {
-  const { bands, zip } = currentFilters();
-  const visible = features.filter((f) => {
+  const { bands, zip, q } = currentFilters();
+  const passes = (f) => {
     const p = f.properties;
     return bands.has(p.latest_band || "none") && (!zip || p.zip5 === zip);
-  });
+  };
+  let visible = features.filter(passes);
+
+  const matches = search(searchIndex, q); // [] when q is under 2 characters
+  results = q.length >= 2 ? matches.filter(passes) : null;
+  if (results) visible = results;
+
   clusters.clearLayers();
   clusters.addLayers(visible.map((f) => markers.get(f.id)));
-  countEl.textContent = `${visible.length.toLocaleString()} of ${features.length.toLocaleString()} establishments`;
-  if (fit && zip && visible.length) map.fitBounds(clusters.getBounds(), { maxZoom: 15, padding: [20, 20] });
+  const total = features.length.toLocaleString();
+  countEl.textContent = results
+    ? `${visible.length.toLocaleString()} ${visible.length === 1 ? "match" : "matches"} of ${total}`
+    : `${visible.length.toLocaleString()} of ${total} establishments`;
+  if (fit && visible.length) map.fitBounds(clusters.getBounds(), { maxZoom: 15, padding: [20, 20] });
+
+  // With no establishment or decliners view open, the panel shows the results.
+  if (!location.hash) route();
 }
 
-filtersForm.addEventListener("change", () => applyFilters());
+filtersForm.addEventListener("change", (e) => {
+  if (e.target.name !== "q") applyFilters(); // search runs on input, below
+});
 filtersForm.zip.addEventListener("input", (e) => {
   const v = e.target.value.trim();
   if (v === "" || v.length === 5) applyFilters({ fit: v.length === 5 });
 });
-filtersForm.addEventListener("submit", (e) => e.preventDefault());
+
+// Search as you type, debounced so a fast typist doesn't refilter 6k markers per key.
+let searchTimer;
+filtersForm.q.addEventListener("input", () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    // Typing a new search leaves any open establishment/decliners view.
+    if (location.hash) history.pushState(null, "", location.pathname + location.search);
+    applyFilters();
+  }, 150);
+});
+filtersForm.q.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && filtersForm.q.value) {
+    filtersForm.q.value = "";
+    applyFilters();
+  }
+});
+
+// Enter opens the best match.
+filtersForm.addEventListener("submit", (e) => {
+  e.preventDefault();
+  clearTimeout(searchTimer);
+  applyFilters();
+  if (results && results.length) location.hash = `#/establishment/${results[0].id}`;
+});
 
 async function loadEstablishments() {
   countEl.textContent = "Loading…";
@@ -143,6 +192,7 @@ async function loadEstablishments() {
     marker.on("click", () => { location.hash = `#/establishment/${f.id}`; });
     markers.set(f.id, marker);
   }
+  searchIndex = buildIndex(features, { name: (f) => f.properties.name, address: (f) => f.properties.address });
   applyFilters();
 }
 
@@ -155,7 +205,14 @@ function showPanel(...content) {
   panel.scrollTop = 0;
 }
 
+// Close steps back one level: an establishment opened from search returns to
+// the results; the results list itself (no hash) just hides.
 document.getElementById("panel-close").addEventListener("click", () => {
+  if (!location.hash) {
+    panel.hidden = true;
+    highlight.remove();
+    return;
+  }
   history.pushState(null, "", location.pathname + location.search);
   route();
 });
@@ -265,6 +322,44 @@ function scoreChart(history) {
   return chart;
 }
 
+function showSearchResults() {
+  const { q, bands, zip } = currentFilters();
+  const filtered = bands.size < 4 || zip;
+  const shown = results.slice(0, MAX_RESULTS);
+  const items = shown.map((f) => {
+    const p = f.properties;
+    const band = p.latest_band || "none";
+    return el("li", {},
+      el("button", { type: "button", onclick: () => { location.hash = `#/establishment/${f.id}`; } },
+        el("div", { class: "row" },
+          el("span", { class: `mini ${band}`, title: `Latest score: ${BAND_LABEL[band]}` }, p.latest_score ?? "—"),
+          el("div", {},
+            el("div", { class: "name" }, p.name),
+            // The full street address tells same-name locations apart.
+            el("div", { class: "meta" }, p.address || "Address not listed"),
+          ),
+        ),
+      ),
+    );
+  });
+
+  let note;
+  if (!results.length) {
+    note = filtered
+      ? `No matches for “${q}” within the current filters. Try turning bands back on or clearing the ZIP.`
+      : `No matches for “${q}”.`;
+  } else {
+    note = `${results.length.toLocaleString()} ${results.length === 1 ? "match" : "matches"} for “${q}”`
+      + (filtered ? " within the current filters" : "")
+      + (results.length > MAX_RESULTS ? `; showing the first ${MAX_RESULTS}. Add a word to narrow it.` : ".");
+  }
+  showPanel(
+    el("h2", {}, "Search"),
+    el("p", { class: "note" }, note),
+    items.length ? el("ol", { class: "decliners results" }, items) : null,
+  );
+}
+
 async function showDecliners() {
   showPanel(el("p", { class: "note" }, "Loading…"));
   const { zip } = currentFilters();
@@ -293,7 +388,10 @@ async function route() {
   try {
     if (m) await showEstablishment(Number(m[1]));
     else if (location.hash === "#/decliners") await showDecliners();
-    else {
+    else if (results) {
+      showSearchResults();
+      highlight.remove();
+    } else {
       panel.hidden = true;
       highlight.remove();
     }

@@ -40,6 +40,10 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 .band-toggle.yellow { color: #a37a00; }
 .band-toggle.red { color: var(--red); }
 .band-toggle.none { color: var(--none); }
+.search input {
+  width: 17rem; padding: 0.3rem 0.6rem; font: inherit;
+  border: 1px solid var(--line); border-radius: 6px;
+}
 .zip input { width: 5.5rem; padding: 0.3rem 0.5rem; font: inherit; border: 1px solid var(--line); border-radius: 6px; }
 .zip input:invalid { border-color: var(--red); }
 #show-decliners {
@@ -109,6 +113,15 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 .decliners button:hover, .decliners button:focus-visible { background: #f4f6f9; }
 .decliners .name { font-weight: 600; }
 .decliners .meta { color: var(--muted); font-size: 0.85rem; }
+.results .row { display: flex; align-items: flex-start; gap: 0.6rem; }
+.results .mini {
+  flex: none; min-width: 2.2rem; text-align: center; font-weight: 700; font-size: 0.85rem;
+  color: #fff; border-radius: 5px; padding: 0.1rem 0.3rem; margin-top: 0.1rem;
+}
+.results .mini.green { background: var(--green); }
+.results .mini.yellow { background: var(--yellow); }
+.results .mini.red { background: var(--red); }
+.results .mini.none { background: var(--none); }
 
 /* --- markers ----------------------------------------------------------- */
 
@@ -151,6 +164,7 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 
 @media (max-width: 720px) {
   .count { margin-left: 0; }
+  .search, .search input { width: 100%; }
   .panel {
     position: absolute; left: 0; right: 0; bottom: 0; width: auto; max-height: 60%;
     border-left: 0; border-top: 1px solid var(--line); z-index: 1000;

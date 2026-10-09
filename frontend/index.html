@@ -12,7 +12,12 @@
 <body>
   <header class="topbar">
     <h1>Austin Food Scores</h1>
-    <form class="filters" id="filters" aria-label="Filters">
+    <form class="filters" id="filters" aria-label="Filters" role="search">
+      <label class="search">
+        <span class="visually-hidden">Search by name or address</span>
+        <input type="search" name="q" placeholder="Search name or address" maxlength="80"
+               autocomplete="off" spellcheck="false" enterkeyhint="search">
+      </label>
       <fieldset class="bands">
         <legend class="visually-hidden">Latest score band</legend>
         <label class="band-toggle green"><input type="checkbox" name="band" value="green" checked> 90+</label>
