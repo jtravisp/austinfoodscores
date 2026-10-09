@@ -39,6 +39,31 @@ def cmd_load(args: argparse.Namespace) -> None:
     )
 
 
+def cmd_remote_migrate(args: argparse.Namespace) -> None:
+    """Invoke the migrate Lambda in AWS, optionally with the master password for role bootstrap."""
+    import json
+
+    import boto3
+
+    session = boto3.Session(profile_name=args.profile or f"afs-{args.env}")
+    payload = {}
+    if args.bootstrap:
+        # RDS keeps the master password in Secrets Manager; read it here (outside the
+        # VPC) and hand it to the in-VPC function in the invocation payload.
+        instance = session.client("rds").describe_db_instances(DBInstanceIdentifier=f"afs-{args.env}")["DBInstances"][0]
+        secret = session.client("secretsmanager").get_secret_value(SecretId=instance["MasterUserSecret"]["SecretArn"])
+        payload["master_password"] = json.loads(secret["SecretString"])["password"]
+
+    response = session.client("lambda").invoke(
+        FunctionName=f"afs-{args.env}-migrate",
+        Payload=json.dumps(payload).encode(),
+    )
+    body = json.loads(response["Payload"].read())
+    if "FunctionError" in response:
+        raise SystemExit(f"migrate failed: {body.get('errorType')}: {body.get('errorMessage')}")
+    print(body)
+
+
 def main() -> None:
     try:
         from dotenv import load_dotenv  # dev-only dependency; absent in Lambda
@@ -59,6 +84,12 @@ def main() -> None:
     load.add_argument("path", help="a data/raw/.../*.json.gz snapshot")
     load.add_argument("--force", action="store_true", help="load even if this watermark+query already succeeded")
     load.set_defaults(func=cmd_load)
+
+    remote = sub.add_parser("remote-migrate", help="run migrations in AWS via the migrate Lambda")
+    remote.add_argument("--env", required=True, choices=["dev", "prod"])
+    remote.add_argument("--bootstrap", action="store_true", help="also create DB roles (first run per environment)")
+    remote.add_argument("--profile", help="AWS profile (default: afs-<env>)")
+    remote.set_defaults(func=cmd_remote_migrate)
 
     args = parser.parse_args()
     args.func(args)

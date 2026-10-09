@@ -12,6 +12,7 @@ afs = "afs.cli:main"
 
 [dependency-groups]
 dev = [
+    "boto3>=1.43.110",
     "pytest>=8",
     "python-dotenv>=1.0",
     "tzdata>=2026.5",

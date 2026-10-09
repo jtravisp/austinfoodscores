@@ -15,16 +15,62 @@ from psycopg.types.json import Jsonb
 from afs.transform import Establishment, Inspection
 
 
-def connect(dsn: str | None = None) -> psycopg.Connection:
-    """Connect using an explicit DSN or the DATABASE_URL environment variable.
+RDS_CA_BUNDLE = str(files("afs") / "certs" / "rds-global-bundle.pem")
 
-    In AWS this will be replaced by an IAM auth token (Phase 2).
+
+def connect(dsn: str | None = None) -> psycopg.Connection:
+    """Connect to the database for the current environment.
+
+    - Explicit `dsn`, or DATABASE_URL set: plain connection (local docker).
+    - Otherwise (Lambda): IAM auth as DB_USER on DB_HOST, using a token
+      generated from the function's own IAM role.
 
     autocommit=True means nothing is transactional unless wrapped in an
     explicit `with conn.transaction():` block, so every transaction boundary
     is visible in the code.
     """
-    return psycopg.connect(dsn or os.environ["DATABASE_URL"], autocommit=True)
+    dsn = dsn or os.environ.get("DATABASE_URL")
+    if dsn:
+        return psycopg.connect(dsn, autocommit=True)
+    return _connect_rds(user=os.environ["DB_USER"], password=_iam_token(os.environ["DB_USER"]))
+
+
+def connect_master(password: str) -> psycopg.Connection:
+    """Connect as the RDS master user. Only used for the one-time role bootstrap."""
+    return _connect_rds(user=os.environ["DB_MASTER_USER"], password=password)
+
+
+def _iam_token(user: str) -> str:
+    """A 15-minute IAM auth token. Signed locally with the caller's credentials; no network call."""
+    import boto3  # in the Lambda runtime; dev-only dependency locally
+
+    return boto3.client("rds").generate_db_auth_token(
+        DBHostname=os.environ["DB_HOST"],
+        Port=int(os.environ.get("DB_PORT", "5432")),
+        DBUsername=user,
+    )
+
+
+def _connect_rds(*, user: str, password: str) -> psycopg.Connection:
+    # verify-full: encrypt AND check the server's certificate against the RDS CA
+    # and its hostname, so we can't be talked into sending a token to an impostor.
+    return psycopg.connect(
+        host=os.environ["DB_HOST"],
+        port=int(os.environ.get("DB_PORT", "5432")),
+        dbname=os.environ["DB_NAME"],
+        user=user,
+        password=password,
+        sslmode="verify-full",
+        sslrootcert=RDS_CA_BUNDLE,
+        connect_timeout=10,
+        autocommit=True,
+    )
+
+
+def bootstrap_roles(conn: psycopg.Connection) -> None:
+    """Create the afs_* roles and grants. Must run as the RDS master user."""
+    with conn.transaction():
+        conn.execute((files("afs") / "bootstrap_roles.sql").read_text(encoding="utf-8"))
 
 
 def migrate(conn: psycopg.Connection) -> list[str]:

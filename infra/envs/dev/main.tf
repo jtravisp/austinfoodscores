@@ -36,6 +36,8 @@ provider "aws" {
 
 locals {
   name = "afs-dev"
+  # Built by `uv run python scripts/build_lambda.py` before plan/apply.
+  lambda_zip = "${path.root}/../../../build/lambda.zip"
 }
 
 module "network" {
@@ -44,4 +46,29 @@ module "network" {
   name              = local.name
   cidr              = "10.20.0.0/16"
   flow_logs_enabled = false
+}
+
+# Dev is disposable: no backups, no final snapshot, no deletion protection.
+# `terraform destroy` between sessions; rebuild with apply + remote-migrate + load.
+module "database" {
+  source = "../../modules/database"
+
+  name                     = local.name
+  subnet_ids               = module.network.private_subnet_ids
+  rds_security_group_id    = module.network.rds_security_group_id
+  lambda_security_group_id = module.network.lambda_security_group_id
+  lambda_zip               = local.lambda_zip
+
+  backup_retention_days = 0
+  deletion_protection   = false
+  skip_final_snapshot   = true
+  apply_immediately     = true
+}
+
+output "db_address" {
+  value = module.database.address
+}
+
+output "migrate_function_name" {
+  value = module.database.migrate_function_name
 }
