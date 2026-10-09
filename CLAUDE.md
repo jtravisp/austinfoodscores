@@ -2,6 +2,8 @@
 
 Portfolio project: a web map of Travis County food establishments showing each one's latest health inspection score and its trend over time. Built to practice AWS, Terraform, and Python for a cloud engineering assessment.
 
+Product requirements (goals, endpoints, metric definitions, open questions): [`docs/PRD.md`](docs/PRD.md). Keep it in sync when requirements change.
+
 ## Working agreement
 
 - The owner wants to understand every piece. Explain decisions as you go; build one phase at a time.
@@ -18,7 +20,7 @@ The source keeps only a rolling ~3 years. Our database accumulates history beyon
 City of Austin Socrata dataset `ecmv-9xxi` ("Food Establishment Inspection Scores"), data.austintexas.gov.
 - One row per inspection. ~20.5k rows, ~6.5k facilities (as of 2026-10). Fits in one 50k-row page, but always page.
 - Publisher updates bi-weekly (Tuesdays). We ingest weekly (prod) — cheap and never misses a batch.
-- SODA3 requires an app token, stored as an SSM Parameter Store SecureString per env.
+- SODA3 requires an app token (sent as the `X-App-Token` header), stored as an SSM Parameter Store SecureString per env and in a gitignored `.env` locally. The app *secret* is not used.
 
 | API field | Type | Maps to | Notes |
 |---|---|---|---|
@@ -57,11 +59,11 @@ Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `
 
 - One AWS account per environment, in the `AFS` OU of the owner's AWS Organization: `afs-dev`, `afs-prod`. Region `us-east-1`.
 - Local access via IAM Identity Center: CLI profiles `afs-dev` / `afs-prod` (log in with `aws sso login --sso-session tpollard`).
-- Per-account cost budgets with email alerts are created in `infra/bootstrap`, not by hand.
+- Monthly cost budgets exist (created via CLI 2026-10-08): `afs-dev-monthly` $10, `afs-prod-monthly` $25, email alerts at 80%/100% actual. `infra/bootstrap` should adopt them with Terraform `import` blocks, not create duplicates.
 - **local**: docker compose Postgres; run the Python ETL locally.
 - **dev**: 90-day data slice, ingest on manual trigger, small, teardown-friendly.
 - **prod**: full backfill, weekly schedule, deletion protection.
-- Terraform: `infra/bootstrap/` (applied once per account: state bucket, GitHub OIDC provider, deploy role, budget); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
+- Terraform: `infra/bootstrap/` (applied once per account: state bucket, GitHub OIDC provider, deploy role, imported budget); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
 - CI: GitHub Actions with AWS OIDC. Plan on PR, auto-apply dev on merge to main, manual approval (GitHub `production` environment) before prod.
 
 ## Python
