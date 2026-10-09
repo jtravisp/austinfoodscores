@@ -144,6 +144,8 @@ body { display: flex; flex-direction: column; background: var(--bg); }
 .cluster .hole { fill: #fff; }
 .cluster text { font-size: 12px; font-weight: 700; fill: var(--ink); }
 
+.leaflet-tooltip { font: inherit; font-size: 0.85rem; }
+
 .leaflet-interactive.highlight, .highlight { fill: none; stroke: var(--ink); stroke-width: 3; stroke-dasharray: 4 3; }
 
 /* --- footer ------------------------------------------------------------ */
