@@ -55,11 +55,13 @@ Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `
 
 ## Environments and accounts
 
-- One AWS account per environment, under the owner's existing AWS Organization: `afs-dev`, `afs-prod`. Access via IAM Identity Center profiles.
+- One AWS account per environment, in the `AFS` OU of the owner's AWS Organization: `afs-dev`, `afs-prod`. Region `us-east-1`.
+- Local access via IAM Identity Center: CLI profiles `afs-dev` / `afs-prod` (log in with `aws sso login --sso-session tpollard`).
+- Per-account cost budgets with email alerts are created in `infra/bootstrap`, not by hand.
 - **local**: docker compose Postgres; run the Python ETL locally.
 - **dev**: 90-day data slice, ingest on manual trigger, small, teardown-friendly.
 - **prod**: full backfill, weekly schedule, deletion protection.
-- Terraform: `infra/bootstrap/` (applied once per account: state bucket, GitHub OIDC provider, deploy role); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
+- Terraform: `infra/bootstrap/` (applied once per account: state bucket, GitHub OIDC provider, deploy role, budget); `infra/modules/{network,database,ingest,api,frontend}`; `infra/envs/{dev,prod}` as separate root modules. Each env's state lives in a bucket in its own account, `use_lockfile = true`. No workspaces.
 - CI: GitHub Actions with AWS OIDC. Plan on PR, auto-apply dev on merge to main, manual approval (GitHub `production` environment) before prod.
 
 ## Python
