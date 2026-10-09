@@ -36,3 +36,5 @@ jobs:
       # --locked: fail if uv.lock is out of date instead of silently re-resolving.
       - run: uv sync --locked
       - run: uv run pytest -q
+      # Frontend logic (search.js) under Node's built-in runner; no npm, no deps.
+      - run: node --test frontend/

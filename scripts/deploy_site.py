@@ -64,7 +64,12 @@ def main() -> None:
     session = boto3.Session(profile_name=profile)
     s3 = session.client("s3")
 
-    local = {p.relative_to(SITE).as_posix(): p for p in sorted(SITE.rglob("*")) if p.is_file()}
+    # *.test.* are the frontend's unit tests (node --test); they don't ship.
+    local = {
+        p.relative_to(SITE).as_posix(): p
+        for p in sorted(SITE.rglob("*"))
+        if p.is_file() and ".test." not in p.name
+    }
     for key, path in local.items():
         s3.put_object(
             Bucket=bucket,
