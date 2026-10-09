@@ -38,7 +38,7 @@ jobs:
       TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }} # prod only; ignored where undeclared
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       # Plans hash the Lambda zip (source_code_hash), so it must exist.

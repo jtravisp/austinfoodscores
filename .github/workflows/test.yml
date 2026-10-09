@@ -30,7 +30,7 @@ jobs:
       DATABASE_URL: postgresql://afs:afs@localhost:5432/afs
     steps:
       - uses: actions/checkout@v7
-      - uses: astral-sh/setup-uv@v10
+      - uses: astral-sh/setup-uv@v10.2.0
         with:
           enable-cache: true
       # --locked: fail if uv.lock is out of date instead of silently re-resolving.
