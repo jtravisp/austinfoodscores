@@ -128,7 +128,8 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
   3. `uv run afs remote-migrate --env dev --bootstrap`
   4. `uv run afs remote-fetch --env dev`, which uploads to S3; that triggers the load. Check `/aws/lambda/afs-dev-load` logs.
   5. `uv run python scripts/deploy_site.py --env dev`, then open the `site_url` output.
-  Session end: `terraform -chdir=infra/envs/dev destroy`. The bootstrap stacks stay.
+  Or run it all in one click: **Actions → dev → Run workflow → apply**.
+  Session end: **Actions → dev → Run workflow → destroy** (or locally `terraform -chdir=infra/envs/dev destroy`). The bootstrap stacks stay.
 - **prod** (live since 2026-10-09 at https://austinfood.travispollard.com): full dataset, weekly schedule (Wed 07:00 America/Chicago), deletion protection, 7-day backups, final snapshot, flow logs, `apply_immediately = false`, alarms → SNS email (subscription confirmed). Root `infra/envs/prod`; `alarm_email` comes from gitignored `alarm.local.auto.tfvars` locally and the `ALARM_EMAIL` Actions variable in CI.
 - Bootstrap (applied by hand, never by CI; done for both accounts 2026-10-08): `infra/modules/bootstrap` + thin roots `infra/bootstrap/{dev,prod}`. Each creates:
   - state bucket `afs-tfstate-<account_id>` (versioned, TLS-only, `prevent_destroy`); bootstrap's own state is at key `bootstrap/terraform.tfstate`
@@ -143,7 +144,7 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
 - **CI/CD** (`.github/workflows/`; actions: checkout v7, setup-uv v10, setup-terraform v4 pinned to TF 1.15.3, configure-aws-credentials v6, upload/download-artifact v7/v8):
   - `test.yml` (reusable): pytest against a `postgres:17` service container.
   - `ci.yml` (pull requests): test, plus `plan (dev)` and `plan (prod)` (fmt -check, validate, plan → job summary) with the read-only plan roles. Fork PRs get no OIDC token, so plans are skipped for them.
-  - `deploy.yml` (push to main): test → **plan** prod (plan role; saved `tfplan` + `lambda.zip` artifact, 1-day retention; summary to review) → **apply** in the `production` environment (required reviewer: jtravisp). It applies *that* plan file (stale → fails), runs `remote-migrate`, then **switches to the web-deploy role** for the site upload. Concurrency `deploy-prod`, never cancelled.
+  - `deploy.yml` (push to main, except Markdown/`docs/`-only changes): test → **plan** prod (plan role; saved `tfplan` + `lambda.zip` artifact, 1-day retention; summary to review) → **apply** in the `production` environment (required reviewer: jtravisp). It applies *that* plan file (stale → fails), runs `remote-migrate`, then **switches to the web-deploy role** for the site upload. Concurrency `deploy-prod`, never cancelled.
   - `dev.yml` (manual, from main): `apply` builds dev end to end (apply, `--bootstrap` migrate, fetch, site deploy); `destroy` tears it down. **Merges never touch dev.**
   - IAM: every CI trust lists the OIDC `sub` in **both** shapes GitHub mints: classic `repo:jtravisp/austinfoodscores:…` and immutable `repo:jtravisp@109884588/austinfoodscores@1411096114:…` (the first CI run was refused with only the classic shape). The plan role trusts `pull_request` **and** `ref:refs/heads/main` (read-only; the deploy plan runs on main). The apply and **web-deploy** roles (`afs-<env>-github-web-deploy`: put/get/delete/list on the site bucket, CloudFront invalidations) trust `main` (dev) / `environment:production` (prod).
   - CLI/scripts accept `--profile ""` to use ambient (OIDC) credentials; `deploy_site.py --bucket --distribution` skips the terraform-output lookup.
@@ -221,11 +222,11 @@ infra/bootstrap/{dev,prod}, infra/dns, infra/modules/*, infra/envs/{dev,prod}
 2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
 3. ✅ API (dev, verified 2026-10-09).
 4. ✅ Frontend (dev, verified 2026-10-09) and DNS delegation for austinfood.travispollard.com.
-5. Prod (✅ live 2026-10-09 at austinfood.travispollard.com) + CI (in progress).
+5. ✅ Prod (live 2026-10-09 at austinfood.travispollard.com) + CI/CD. The first pipeline deploy was approved and succeeded 2026-10-09, and dev was destroyed via `dev.yml` (61 resources).
 
 ## Related repos
 
-- `../travispollard.com`: the personal site. Its header has an **Apps** disclosure menu (CFB Forecast, NCOER Writer, Austin Food Scores) and a `austin-food-scores` entry in `frontend/content/projects.ts` (PR jtravisp/travispollard.com#102). That repo has its own conventions (see its CLAUDE.md): project `items` are in Travis's voice, and generated sitemaps must not be committed by hand.
+- `../travispollard.com`: the personal site. Its header has an **Apps** disclosure menu (CFB Forecast, NCOER Writer, Austin Food Scores) and a `austin-food-scores` entry in `frontend/content/projects.ts` (PR jtravisp/travispollard.com#102), and `austin-food-scores` in `status_targets` in its root `status-checker.tf` (applied, so /status monitors this site). That repo now checks out `*.tf` with LF (#103), so a full plan from Windows is clean. That repo has its own conventions (see its CLAUDE.md): project `items` are in Travis's voice, and generated sitemaps must not be committed by hand.
 
 ## Windows notes
 
