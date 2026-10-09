@@ -40,3 +40,9 @@ variable "github_repo_id" {
   description = "Numeric GitHub id of the repo, for the immutable OIDC subject shape (gh api repos/<repo> --jq .id)."
   type        = string
 }
+
+variable "web_deploy_subjects" {
+  description = "OIDC sub suffixes allowed to assume the web-deploy role. Empty = same as apply_subject."
+  type        = list(string)
+  default     = []
+}
