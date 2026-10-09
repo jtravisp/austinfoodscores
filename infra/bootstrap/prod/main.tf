@@ -44,6 +44,8 @@ module "bootstrap" {
 
   env              = "prod"
   github_repo      = "jtravisp/austinfoodscores"
+  github_owner_id  = "109884588"
+  github_repo_id   = "1411096114"
   apply_subject    = "environment:production"
   budget_name      = "afs-prod-monthly"
   budget_limit_usd = "25.0"

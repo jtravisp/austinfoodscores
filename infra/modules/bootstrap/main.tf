@@ -9,6 +9,21 @@ data "aws_caller_identity" "current" {}
 locals {
   account_id = data.aws_caller_identity.current.account_id
   oidc_host  = "token.actions.githubusercontent.com"
+
+  # GitHub mints the OIDC `sub` claim in two shapes:
+  #   classic:   repo:jtravisp/austinfoodscores:...
+  #   immutable: repo:jtravisp@109884588/austinfoodscores@1411096114:...
+  # The immutable one carries numeric owner/repo ids so a trust policy can't be
+  # inherited by whoever registers the name after a rename. The first CI run was
+  # refused with only the classic shape trusted (2026-10-09); ncoer saw the same.
+  # Both are listed as exact strings: StringEquals over a list is an OR of exact
+  # matches, as tight as one value, unlike a StringLike wildcard.
+  repo_owner = split("/", var.github_repo)[0]
+  repo_name  = split("/", var.github_repo)[1]
+  repo_shapes = [
+    var.github_repo,
+    "${local.repo_owner}@${var.github_owner_id}/${local.repo_name}@${var.github_repo_id}",
+  ]
 }
 
 # --- Terraform state bucket ----------------------------------------------------------
@@ -95,8 +110,8 @@ resource "aws_iam_openid_connect_provider" "github" {
 #   apply: main (dev) or the protected `production` environment (prod).
 data "aws_iam_policy_document" "github_trust" {
   for_each = {
-    plan  = ["repo:${var.github_repo}:pull_request", "repo:${var.github_repo}:ref:refs/heads/main"]
-    apply = ["repo:${var.github_repo}:${var.apply_subject}"]
+    plan  = flatten([for r in local.repo_shapes : ["repo:${r}:pull_request", "repo:${r}:ref:refs/heads/main"]])
+    apply = [for r in local.repo_shapes : "repo:${r}:${var.apply_subject}"]
   }
 
   statement {

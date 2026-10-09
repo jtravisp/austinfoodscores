@@ -30,3 +30,13 @@ variable "budget_email" {
   description = "Where budget alerts go. Set in a gitignored *.local.auto.tfvars file."
   type        = string
 }
+
+variable "github_owner_id" {
+  description = "Numeric GitHub id of the repo owner, for the immutable OIDC subject shape (gh api repos/<repo> --jq .owner.id)."
+  type        = string
+}
+
+variable "github_repo_id" {
+  description = "Numeric GitHub id of the repo, for the immutable OIDC subject shape (gh api repos/<repo> --jq .id)."
+  type        = string
+}

@@ -44,6 +44,8 @@ module "bootstrap" {
 
   env              = "dev"
   github_repo      = "jtravisp/austinfoodscores"
+  github_owner_id  = "109884588"
+  github_repo_id   = "1411096114"
   apply_subject    = "ref:refs/heads/main"
   budget_name      = "afs-dev-monthly"
   budget_limit_usd = "10.0"
