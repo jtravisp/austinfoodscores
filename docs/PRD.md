@@ -55,6 +55,15 @@ Austin Public Health publishes food establishment inspection scores (Socrata dat
 - Collapse repeated whitespace in addresses.
 - Keep jurisdiction-prefixed names (`PF -`, `LW -`, `BC -`, `VV -`) as-is.
 
+## Decisions from data profiling (2026-10-08)
+
+- The source republishes every row each time, so ingest pulls a full snapshot and skips the run when the dataset's `rowsUpdatedAt` hasn't changed.
+- Inspections with no score (48 rows) are kept with a NULL score and excluded from metrics.
+- Follow-up inspections (103 rows, 0.5%) count toward trends.
+- Score band is derived from the score, not taken from the source text.
+- Facilities without coordinates (202) are stored but not shown on the map.
+- Metrics are computed in a SQL view.
+
 ## Metric definitions (proposed; to be finalized in Phase 1)
 
 Computed per establishment over its inspections ordered by date:
@@ -67,8 +76,6 @@ Computed per establishment over its inspections ordered by date:
 | Inspections under 80 | Count of all inspections with score < 80 |
 | Days since last | Today − latest inspection date |
 | Decliner | Score delta ≤ −10 with latest inspection in the last 180 days, ranked by delta |
-
-Open question: should follow-up and re-inspections count toward trends, or only "Routine Inspection"? To be decided after looking at the `process_description` distribution in Phase 1.
 
 ## Non-functional requirements
 
@@ -95,4 +102,3 @@ Open question: should follow-up and re-inspections count toward trends, or only 
 ## Open questions
 
 - How to run DDL and `GRANT rds_iam` with master credentials inside a VPC with no NAT (Phase 2).
-- Whether to include follow-up inspections in trend metrics (Phase 1).

@@ -1,0 +1,24 @@
+[project]
+name = "afs"
+version = "0.1.0"
+description = "Austin food establishment inspection scores: ETL and API"
+requires-python = ">=3.12,<3.13"
+dependencies = [
+    "psycopg[binary]>=3.2",
+]
+
+[project.scripts]
+afs = "afs.cli:main"
+
+[dependency-groups]
+dev = [
+    "pytest>=8",
+    "python-dotenv>=1.0",
+]
+
+[build-system]
+requires = ["uv_build>=0.8,<0.13"]
+build-backend = "uv_build"
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

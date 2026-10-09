@@ -43,8 +43,17 @@ Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `
 - `establishments(facility_id PK, name, address, zip5, lat, lon, first_seen, last_seen)`
 - `inspections(id PK, facility_id FK, inspected_on, score, process, band)`
 - `ingest_runs(id, started_at, finished_at, watermark, rows_upserted, status)`
-- Derived per-establishment metrics: latest score, trend over last 3 inspections, score delta, count of inspections under 80, days since last inspection.
+- Derived per-establishment metrics: latest score, trend over last 3 inspections, score delta, count of inspections under 80, days since last inspection. Computed in a **SQL view** (window functions, `regr_slope`), not Python.
 - All upserts idempotent (`INSERT ... ON CONFLICT`). Loading the same file twice must not change row counts.
+- Schema changes: numbered SQL files in `src/afs/migrations/`, never edit an applied one; add a new file. No ORM.
+- `inspections.band` is a generated column derived from score (`green` ≥90, `yellow` 70–89, `red` <70, NULL if no score). The source's band text is ignored (it has stray whitespace).
+- `inspections.score` is nullable (48 source rows have none); metrics ignore NULLs. Follow-up inspections count toward metrics.
+- Establishments without coordinates are stored (lat/lon NULL), excluded from map GeoJSON. Upserts must not overwrite known coords with NULL.
+- `first_seen`/`last_seen` are ingest-run dates, not inspection dates.
+
+## Ingest strategy
+
+The source rewrites every row on each publish (`:updated_at` is identical across rows), so there is no per-row watermark. Each run: read the dataset's `rowsUpdatedAt` metadata; if it equals the last succeeded run's `watermark`, record a `skipped` run and stop; otherwise pull the full snapshot (~20k rows) and upsert everything. Full snapshots also pick up corrections to old rows.
 
 ## Architecture (no NAT gateway; minimize cost)
 
@@ -77,8 +86,10 @@ Coverage is Travis County, not just Austin. Name prefixes like `PF -`, `LW -`, `
 
 ```
 docker-compose.yml, pyproject.toml, uv.lock
-src/afs/{transform,metrics,socrata,db}.py, schema.sql, handlers/{fetch,load,query}.py
-scripts/        local CLI (fetch → file, load file → local PG)
+src/afs/{transform,socrata,db,cli}.py, handlers/{fetch,load,query}.py
+src/afs/migrations/NNN_*.sql   numbered, append-only; applied by db.migrate()
+                               (metrics live here as a SQL view)
+src/afs/cli.py  local CLI: `uv run afs migrate|fetch|load`
 tests/          pytest
 frontend/       index.html, app.js
 infra/bootstrap, infra/modules/*, infra/envs/{dev,prod}
