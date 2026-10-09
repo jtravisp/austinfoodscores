@@ -1,0 +1,38 @@
+# Reusable: unit + integration tests against a throwaway Postgres 17.
+# Called by ci.yml (pull requests) and deploy.yml (main), so both run the same suite.
+name: test
+
+on:
+  workflow_call:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    services:
+      # A service container: GitHub starts it next to the job, like docker compose locally.
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_USER: afs
+          POSTGRES_PASSWORD: afs
+          POSTGRES_DB: afs
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U afs -d afs"
+          --health-interval 2s
+          --health-timeout 3s
+          --health-retries 15
+    env:
+      DATABASE_URL: postgresql://afs:afs@localhost:5432/afs
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      # --locked: fail if uv.lock is out of date instead of silently re-resolving.
+      - run: uv sync --locked
+      - run: uv run pytest -q

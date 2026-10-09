@@ -1,0 +1,69 @@
+# Pull requests: tests, Terraform checks, and a plan for each environment.
+# Nothing here can change AWS: plans use the read-only afs-<env>-github-plan roles.
+name: ci
+
+on:
+  pull_request:
+    branches: [main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.head_ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  plan:
+    name: plan (${{ matrix.env }})
+    # PRs from forks get no OIDC token (by GitHub's design), so they can't plan.
+    if: github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write # lets the job request a GitHub OIDC token to exchange for AWS credentials
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - env: dev
+            account: "060516714585"
+          - env: prod
+            account: "169406897968"
+    env:
+      TF_IN_AUTOMATION: "1"
+      TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }} # prod only; ignored where undeclared
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10
+        with:
+          enable-cache: true
+      # Plans hash the Lambda zip (source_code_hash), so it must exist.
+      - run: uv run python scripts/build_lambda.py
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.3
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ matrix.account }}:role/afs-${{ matrix.env }}-github-plan
+          aws-region: us-east-1
+      - name: terraform fmt
+        run: terraform fmt -check -recursive infra
+      - name: terraform init + validate
+        run: |
+          terraform -chdir=infra/envs/${{ matrix.env }} init -input=false
+          terraform -chdir=infra/envs/${{ matrix.env }} validate
+      - name: terraform plan
+        run: terraform -chdir=infra/envs/${{ matrix.env }} plan -input=false -no-color -lock-timeout=120s -out=tfplan
+      - name: plan summary
+        run: |
+          {
+            echo "## Plan: ${{ matrix.env }}"
+            echo '```'
+            terraform -chdir=infra/envs/${{ matrix.env }} show -no-color tfplan | tail -c 60000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

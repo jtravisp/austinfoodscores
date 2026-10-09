@@ -39,13 +39,20 @@ def cmd_load(args: argparse.Namespace) -> None:
     )
 
 
+def _profile(args: argparse.Namespace) -> str | None:
+    """afs-<env> by default; --profile "" selects ambient credentials (CI's OIDC session)."""
+    if args.profile is None:
+        return f"afs-{args.env}"
+    return args.profile or None
+
+
 def cmd_remote_migrate(args: argparse.Namespace) -> None:
     """Invoke the migrate Lambda in AWS, optionally with the master password for role bootstrap."""
     import json
 
     import boto3
 
-    session = boto3.Session(profile_name=args.profile or f"afs-{args.env}")
+    session = boto3.Session(profile_name=_profile(args))
     payload = {}
     if args.bootstrap:
         # RDS keeps the master password in Secrets Manager; read it here (outside the
@@ -70,7 +77,7 @@ def cmd_remote_fetch(args: argparse.Namespace) -> None:
 
     import boto3
 
-    session = boto3.Session(profile_name=args.profile or f"afs-{args.env}")
+    session = boto3.Session(profile_name=_profile(args))
     response = session.client("lambda").invoke(FunctionName=f"afs-{args.env}-fetch", Payload=b"{}")
     body = json.loads(response["Payload"].read())
     if "FunctionError" in response:
@@ -170,12 +177,12 @@ def main() -> None:
     remote = sub.add_parser("remote-migrate", help="run migrations in AWS via the migrate Lambda")
     remote.add_argument("--env", required=True, choices=["dev", "prod"])
     remote.add_argument("--bootstrap", action="store_true", help="also create DB roles (first run per environment)")
-    remote.add_argument("--profile", help="AWS profile (default: afs-<env>)")
+    remote.add_argument("--profile", help='AWS profile (default: afs-<env>; "" = ambient credentials, e.g. CI)')
     remote.set_defaults(func=cmd_remote_migrate)
 
     rfetch = sub.add_parser("remote-fetch", help="run the fetch Lambda in AWS (triggers a load)")
     rfetch.add_argument("--env", required=True, choices=["dev", "prod"])
-    rfetch.add_argument("--profile", help="AWS profile (default: afs-<env>)")
+    rfetch.add_argument("--profile", help='AWS profile (default: afs-<env>; "" = ambient credentials, e.g. CI)')
     rfetch.set_defaults(func=cmd_remote_fetch)
 
     serve = sub.add_parser("serve", help="run the read API locally against DATABASE_URL")

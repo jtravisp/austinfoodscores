@@ -6,3 +6,7 @@ output "endpoint" {
 output "query_function_name" {
   value = module.query.function_name
 }
+
+output "api_id" {
+  value = aws_apigatewayv2_api.this.id
+}

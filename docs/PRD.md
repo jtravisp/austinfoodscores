@@ -109,7 +109,7 @@ Snapshot as of 2026-10-08: trend is stable for 2,987 establishments, declining f
 | 2 | Dev infra + ingest | Manual fetch in dev lands raw JSON in S3 and rows in RDS |
 | 3 | API | All three endpoints return correct data from dev |
 | 4 | Frontend | Map served from CloudFront (S3 + `/api/*` on one distribution) in dev; DNS delegation for austinfood.travispollard.com in place |
-| 5 | Prod + CI | Prod live at https://austinfood.travispollard.com; PR shows plan; merge deploys dev; approved run deploys prod; weekly ingest running |
+| 5 | Prod + CI | Prod live at https://austinfood.travispollard.com (✅ 2026-10-09); PR shows plans; an approved merge applies the reviewed prod plan; dev on demand; weekly ingest running |
 
 ## Open questions
 
