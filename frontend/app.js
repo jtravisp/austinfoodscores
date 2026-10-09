@@ -66,7 +66,33 @@ const clusters = L.markerClusterGroup({
   chunkedLoading: true, // add markers in slices so the page stays responsive
   showCoverageOnHover: false,
   maxClusterRadius: 50,
+  // Clicks are handled below instead of by the plugin: half of all
+  // establishments share a point with another (strip malls, food halls, the
+  // airport has 42), and the plugin's "spiderfy" fans those out as unlabeled
+  // dots you have to click one by one.
+  zoomToBoundsOnClick: false,
+  spiderfyOnMaxZoom: false,
   iconCreateFunction: (cluster) => donutIcon(cluster.getAllChildMarkers()),
+});
+
+// Establishments closer than this count as "one spot" (shared address, or a
+// geocode a few meters off). Zooming in can't separate them, so list them.
+const SPOT_METERS = 30;
+
+function spreadMeters(latlngs) {
+  const bounds = L.latLngBounds(latlngs);
+  return map.distance(bounds.getSouthWest(), bounds.getNorthEast());
+}
+
+clusters.on("clusterclick", (e) => {
+  const children = e.layer.getAllChildMarkers();
+  const atMaxZoom = map.getZoom() >= map.getMaxZoom();
+  if (atMaxZoom || spreadMeters(children.map((m) => m.getLatLng())) <= SPOT_METERS) {
+    const c = e.layer.getLatLng();
+    location.hash = `#/spot/${c.lat.toFixed(5)},${c.lng.toFixed(5)}`;
+  } else {
+    e.layer.zoomToBounds({ padding: [20, 20] });
+  }
 });
 map.addLayer(clusters);
 
@@ -105,6 +131,7 @@ const markers = new Map(); // facility_id -> L.Marker
 let features = [];
 let searchIndex = []; // normalized name/address per feature, built once at load
 let results = null; // current search matches (array), or null when not searching
+let onMap = []; // features passing every filter (what the map shows right now)
 const MAX_RESULTS = 50;
 
 const filtersForm = document.getElementById("filters");
@@ -136,6 +163,7 @@ function applyFilters({ fit = false } = {}) {
   results = q.length >= 2 ? matches.filter(passes) : null;
   if (results) visible = results;
 
+  onMap = visible;
   clusters.clearLayers();
   clusters.addLayers(visible.map((f) => markers.get(f.id)));
   const total = features.length.toLocaleString();
@@ -190,6 +218,10 @@ async function loadEstablishments() {
     const band = f.properties.latest_band || "none";
     const marker = L.marker([lat, lon], { icon: markerIcons[band], title: f.properties.name, band, keyboard: true });
     marker.on("click", () => { location.hash = `#/establishment/${f.id}`; });
+    // Name and score on hover (and on keyboard focus, which Leaflet 1.9 also
+    // handles). A function returning a node, not a string: Leaflet inserts
+    // string content as HTML, and names come from a third-party dataset.
+    marker.bindTooltip(() => tooltipNode(f.properties), { direction: "top", offset: [0, -8] });
     markers.set(f.id, marker);
   }
   searchIndex = buildIndex(features, { name: (f) => f.properties.name, address: (f) => f.properties.address });
@@ -224,8 +256,10 @@ const highlight = L.circleMarker([0, 0], { radius: 13, className: "highlight", i
 function focusMarker(id) {
   const marker = markers.get(id);
   if (!marker) return;
+  // Center on it rather than clusters.zoomToShowLayer(), which spiderfies when the
+  // marker shares a spot -- the very UI the spot list replaces. The ring marks it.
   highlight.setLatLng(marker.getLatLng()).addTo(map);
-  if (clusters.hasLayer(marker)) clusters.zoomToShowLayer(marker);
+  map.setView(marker.getLatLng(), Math.max(map.getZoom(), 16));
 }
 
 function deltaNode(delta) {
@@ -322,26 +356,53 @@ function scoreChart(history) {
   return chart;
 }
 
+function tooltipNode(p) {
+  return el("span", {}, el("strong", {}, p.name), ` · ${p.latest_score ?? "no score"}`);
+}
+
+// One row in a list of establishments (search results, a shared spot):
+// score badge, name, and full street address, which tells same-name locations apart.
+function resultRow(f, { address = true } = {}) {
+  const p = f.properties;
+  const band = p.latest_band || "none";
+  return el("li", {},
+    el("button", { type: "button", onclick: () => { location.hash = `#/establishment/${f.id}`; } },
+      el("div", { class: "row" },
+        el("span", { class: `mini ${band}`, title: `Latest score: ${BAND_LABEL[band]}` }, p.latest_score ?? "—"),
+        el("div", {},
+          el("div", { class: "name" }, p.name),
+          address ? el("div", { class: "meta" }, p.address || "Address not listed") : null,
+        ),
+      ),
+    ),
+  );
+}
+
+// Everything on the map within SPOT_METERS of a point, by name.
+function showSpot(lat, lng) {
+  const here = L.latLng(lat, lng);
+  const atSpot = onMap
+    .filter((f) => here.distanceTo([f.geometry.coordinates[1], f.geometry.coordinates[0]]) <= SPOT_METERS)
+    .sort((a, b) => a.properties.name.localeCompare(b.properties.name));
+  if (!atSpot.length) {
+    showPanel(el("h2", {}, "Nothing here"), el("p", { class: "note" }, "No establishments at this spot match the current filters."));
+    return;
+  }
+  // A shared address goes in the heading once instead of on every row.
+  const addresses = new Set(atSpot.map((f) => f.properties.address));
+  const shared = addresses.size === 1 ? [...addresses][0] : null;
+  highlight.setLatLng(here).addTo(map);
+  showPanel(
+    el("h2", {}, `${atSpot.length} establishments here`),
+    el("p", { class: "address" }, shared || "Same spot on the map; addresses differ slightly."),
+    el("ol", { class: "decliners results" }, atSpot.map((f) => resultRow(f, { address: !shared }))),
+  );
+}
+
 function showSearchResults() {
   const { q, bands, zip } = currentFilters();
   const filtered = bands.size < 4 || zip;
-  const shown = results.slice(0, MAX_RESULTS);
-  const items = shown.map((f) => {
-    const p = f.properties;
-    const band = p.latest_band || "none";
-    return el("li", {},
-      el("button", { type: "button", onclick: () => { location.hash = `#/establishment/${f.id}`; } },
-        el("div", { class: "row" },
-          el("span", { class: `mini ${band}`, title: `Latest score: ${BAND_LABEL[band]}` }, p.latest_score ?? "—"),
-          el("div", {},
-            el("div", { class: "name" }, p.name),
-            // The full street address tells same-name locations apart.
-            el("div", { class: "meta" }, p.address || "Address not listed"),
-          ),
-        ),
-      ),
-    );
-  });
+  const items = results.slice(0, MAX_RESULTS).map((f) => resultRow(f));
 
   let note;
   if (!results.length) {
@@ -385,8 +446,10 @@ async function showDecliners() {
 
 async function route() {
   const m = location.hash.match(/^#\/establishment\/(\d+)$/);
+  const spot = location.hash.match(/^#\/spot\/(-?[\d.]+),(-?[\d.]+)$/);
   try {
     if (m) await showEstablishment(Number(m[1]));
+    else if (spot) showSpot(Number(spot[1]), Number(spot[2]));
     else if (location.hash === "#/decliners") await showDecliners();
     else if (results) {
       showSearchResults();
