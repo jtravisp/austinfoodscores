@@ -8,8 +8,14 @@
   machine's OS. manylinux_2_28 = glibc 2.28+, which Lambda's Amazon Linux
   2023 (glibc 2.34) satisfies.
 - boto3 is not packaged: the Lambda Python runtime already provides it.
-- The zip is deterministic (sorted entries, fixed timestamps), so rebuilding
-  unchanged code produces an identical file and Terraform sees no change.
+- The zip is deterministic on a given platform (sorted entries, fixed
+  timestamps, LF line endings, Unix create_system), so rebuilding unchanged
+  code produces an identical file and Terraform sees no change.
+- Across platforms it is not: zlib builds compress differently, and uv on
+  Windows writes some wheel metadata (e.g. dist-info license files) differently
+  from Linux. The canonical artifact is therefore the Linux build in CI, which
+  is what every deploy uses; a local Windows build is for local plans, where a
+  Lambda-only source_code_hash diff is expected and harmless.
 """
 
 import shutil
@@ -23,6 +29,7 @@ BUILD = ROOT / "build"
 STAGE = BUILD / "lambda"
 ZIP = BUILD / "lambda.zip"
 FIXED_TIME = (1980, 1, 1, 0, 0, 0)
+TEXT_SUFFIXES = {".py", ".sql", ".pem", ".txt"}
 
 
 def run(*args: str) -> None:
@@ -48,10 +55,18 @@ def main() -> None:
     files = sorted(p for p in STAGE.rglob("*") if p.is_file() and "__pycache__" not in p.parts)
     with zipfile.ZipFile(ZIP, "w", zipfile.ZIP_DEFLATED, compresslevel=9) as zf:
         for path in files:
-            info = zipfile.ZipInfo(path.relative_to(STAGE).as_posix(), date_time=FIXED_TIME)
+            name = path.relative_to(STAGE).as_posix()
+            data = path.read_bytes()
+            # Our own text files can carry CRLF on a Windows checkout (or after an
+            # editor saves them); CI checks out LF. Normalizing makes the zip, and
+            # so Terraform's source_code_hash, identical on every machine.
+            if name.startswith("afs/") and path.suffix in TEXT_SUFFIXES:
+                data = data.replace(b"\r\n", b"\n")
+            info = zipfile.ZipInfo(name, date_time=FIXED_TIME)
             info.external_attr = 0o644 << 16
+            info.create_system = 3  # "made on Unix"; zipfile defaults to the build OS (0 on Windows)
             info.compress_type = zipfile.ZIP_DEFLATED
-            zf.writestr(info, path.read_bytes())
+            zf.writestr(info, data)
 
     print(f"{ZIP.relative_to(ROOT)}: {len(files)} files, {ZIP.stat().st_size / 1e6:.1f} MB")
 

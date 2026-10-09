@@ -189,7 +189,9 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
 - Python 3.12, uv for deps, pytest for unit tests.
 - Transform/cleaning logic lives in pure functions (`src/afs/transform.py`), separate from Lambda handlers (`src/afs/handlers/`), so it is testable locally.
 - Lambda runtime: python3.12 on **arm64**.
-- Packaging: **one deterministic zip** (`scripts/build_lambda.py` → `build/lambda.zip`, ~7 MB). Deps come from `uv export` (the lock file), installed with `--python-platform aarch64-manylinux_2_28 --only-binary=:all:`. Note: manylinux2014 is too old for psycopg 3.3; Lambda's AL2023 has glibc 2.34. boto3 is not packaged (the runtime provides it). Rebuilding unchanged code gives an identical hash, so Terraform doesn't redeploy. Chosen over a container image: a ~5 MB dependency doesn't justify ECR, Docker builds in CI, and slower cold starts.
+- On Windows, write files with `write_bytes`/`newline="
+"`: `Path.write_text()` silently writes CRLF (that caused a cross-platform zip diff).
+- Packaging: **one deterministic zip** (`scripts/build_lambda.py` → `build/lambda.zip`, ~7 MB). Deps come from `uv export` (the lock file), installed with `--python-platform aarch64-manylinux_2_28 --only-binary=:all:`. Note: manylinux2014 is too old for psycopg 3.3; Lambda's AL2023 has glibc 2.34. boto3 is not packaged (the runtime provides it). Rebuilding unchanged code on the same platform gives an identical hash, so Terraform doesn't redeploy. **Across platforms it doesn't** (zlib differences, plus uv writing some wheel metadata differently on Windows), so the **Linux build in CI is the canonical artifact**. A local Windows plan may show a Lambda-only `source_code_hash` diff; that's expected. Don't apply prod from a laptop (CI owns prod). The build also normalizes CRLF→LF in `afs/` text files and pins `create_system = 3`. Chosen over a container image: a ~5 MB dependency doesn't justify ECR, Docker builds in CI, and slower cold starts.
 - Dev-only deps: pytest, python-dotenv, tzdata (Windows zoneinfo), boto3.
 
 ## Repo layout
