@@ -5,13 +5,21 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Austin Food Scores</title>
   <meta name="description" content="Health inspection scores and trends for Austin and Travis County food establishments.">
+  <!-- .ico for browsers without SVG favicons (Safari), SVG for the rest, PNG for iOS home screens. -->
+  <link rel="icon" href="favicon.ico" sizes="32x32">
+  <link rel="icon" href="favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="apple-touch-icon.png">
   <link rel="stylesheet" href="vendor/leaflet-1.9.4/leaflet.css">
   <link rel="stylesheet" href="vendor/leaflet.markercluster-1.5.3/MarkerCluster.css">
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
   <header class="topbar">
-    <h1>Austin Food Scores</h1>
+    <div class="brand">
+      <h1>Austin Food Scores</h1>
+      <!-- Same back-link as ncoer.travispollard.com: same tab, it's home, not elsewhere. -->
+      <p class="byline">A project by <a href="https://travispollard.com">Travis Pollard</a></p>
+    </div>
     <form class="filters" id="filters" aria-label="Filters" role="search">
       <label class="search">
         <span class="visually-hidden">Search by name or address</span>
