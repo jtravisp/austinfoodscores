@@ -65,6 +65,26 @@ module "database" {
   apply_immediately     = true
 }
 
+# Dev: 90-day slice, no schedule (trigger with `uv run afs remote-fetch --env dev`).
+module "ingest" {
+  source = "../../modules/ingest"
+
+  name                     = local.name
+  lambda_zip               = local.lambda_zip
+  subnet_ids               = module.network.private_subnet_ids
+  lambda_security_group_id = module.network.lambda_security_group_id
+  connection_env           = module.database.connection_env
+  dbuser_arn_prefix        = module.database.dbuser_arn_prefix
+
+  since_days       = 90
+  force_destroy    = true
+  schedule_enabled = false
+}
+
+output "raw_bucket" {
+  value = module.ingest.raw_bucket
+}
+
 output "db_address" {
   value = module.database.address
 }

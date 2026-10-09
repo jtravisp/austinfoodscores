@@ -153,6 +153,24 @@ resource "aws_iam_role_policy_attachment" "apply_admin" {
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
+# --- Socrata app token ----------------------------------------------------------------------
+
+# Lives here (not in the env stack) so it survives dev teardowns. Terraform
+# creates the parameter with a placeholder and never touches the value again;
+# the real token is set once by hand, so it's never in config or state:
+#   aws ssm put-parameter --name /afs/socrata-app-token --overwrite --value <token>
+# SecureString with the AWS-managed aws/ssm KMS key: no extra cost.
+resource "aws_ssm_parameter" "socrata_token" {
+  name        = "/afs/socrata-app-token"
+  description = "Socrata (data.austintexas.gov) app token for the fetch Lambda"
+  type        = "SecureString"
+  value       = "placeholder"
+
+  lifecycle {
+    ignore_changes = [value]
+  }
+}
+
 # --- Budget ---------------------------------------------------------------------------------
 
 resource "aws_budgets_budget" "monthly" {

@@ -27,10 +27,13 @@ resource "aws_db_parameter_group" "this" {
   name   = var.name
   family = "postgres17"
 
-  # Reject any non-TLS connection (IAM auth needs TLS anyway).
+  # Reject any non-TLS connection (IAM auth needs TLS anyway). A static
+  # parameter: AWS records it as pending-reboot, and saying so here avoids a
+  # perpetual diff. (New instances boot with it already applied.)
   parameter {
-    name  = "rds.force_ssl"
-    value = "1"
+    name         = "rds.force_ssl"
+    value        = "1"
+    apply_method = "pending-reboot"
   }
 
   # Log statements slower than 1s, for spotting missing indexes.

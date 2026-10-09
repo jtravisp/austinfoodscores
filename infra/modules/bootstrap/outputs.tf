@@ -9,3 +9,7 @@ output "plan_role_arn" {
 output "apply_role_arn" {
   value = aws_iam_role.ci["apply"].arn
 }
+
+output "socrata_token_parameter" {
+  value = aws_ssm_parameter.socrata_token.name
+}

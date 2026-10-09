@@ -64,6 +64,20 @@ def cmd_remote_migrate(args: argparse.Namespace) -> None:
     print(body)
 
 
+def cmd_remote_fetch(args: argparse.Namespace) -> None:
+    """Invoke the fetch Lambda (dev has no schedule). The S3 upload then triggers the load."""
+    import json
+
+    import boto3
+
+    session = boto3.Session(profile_name=args.profile or f"afs-{args.env}")
+    response = session.client("lambda").invoke(FunctionName=f"afs-{args.env}-fetch", Payload=b"{}")
+    body = json.loads(response["Payload"].read())
+    if "FunctionError" in response:
+        raise SystemExit(f"fetch failed: {body.get('errorType')}: {body.get('errorMessage')}")
+    print(body)
+
+
 def main() -> None:
     try:
         from dotenv import load_dotenv  # dev-only dependency; absent in Lambda
@@ -90,6 +104,11 @@ def main() -> None:
     remote.add_argument("--bootstrap", action="store_true", help="also create DB roles (first run per environment)")
     remote.add_argument("--profile", help="AWS profile (default: afs-<env>)")
     remote.set_defaults(func=cmd_remote_migrate)
+
+    rfetch = sub.add_parser("remote-fetch", help="run the fetch Lambda in AWS (triggers a load)")
+    rfetch.add_argument("--env", required=True, choices=["dev", "prod"])
+    rfetch.add_argument("--profile", help="AWS profile (default: afs-<env>)")
+    rfetch.set_defaults(func=cmd_remote_fetch)
 
     args = parser.parse_args()
     args.func(args)

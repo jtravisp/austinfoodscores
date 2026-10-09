@@ -22,7 +22,7 @@ The source keeps only a rolling ~3 years. Our database accumulates history beyon
 City of Austin Socrata dataset `ecmv-9xxi` ("Food Establishment Inspection Scores"), data.austintexas.gov.
 - One row per inspection. ~20.5k rows, ~6.5k facilities (as of 2026-10). Fits in one 50k-row page, but always page.
 - Publisher updates bi-weekly (Tuesdays). We ingest weekly (prod) — cheap and never misses a batch.
-- SODA3 requires an app token (sent as the `X-App-Token` header), stored as an SSM Parameter Store SecureString per env and in a gitignored `.env` locally. The app *secret* is not used.
+- SODA3 requires an app token (sent as the `X-App-Token` header). Locally it's in gitignored `.env`. In AWS it's SSM SecureString `/afs/socrata-app-token`, **created by the bootstrap stack** (placeholder value + `ignore_changes`, so it survives dev teardowns and is never in state); the real value was set once per account outside Terraform. Never read it with the `aws_ssm_parameter` *data source* (that copies the value into state); build the ARN from the name. The app *secret* is not used.
 
 | API field | Type | Maps to | Notes |
 |---|---|---|---|
@@ -111,7 +111,7 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
   1. `uv run python scripts/build_lambda.py`
   2. `$env:AWS_PROFILE="afs-dev"; terraform -chdir=infra/envs/dev apply`
   3. `uv run afs remote-migrate --env dev --bootstrap`
-  4. Trigger an ingest (fetch → load).
+  4. `uv run afs remote-fetch --env dev`, which uploads to S3; that triggers the load. Check `/aws/lambda/afs-dev-load` logs.
   Session end: `terraform -chdir=infra/envs/dev destroy`. The bootstrap stacks stay.
 - **prod**: full backfill, weekly schedule, deletion protection, 7-day backups, flow logs.
 - Bootstrap (applied by hand, never by CI; done for both accounts 2026-10-08): `infra/modules/bootstrap` + thin roots `infra/bootstrap/{dev,prod}`. Each creates:
@@ -132,7 +132,9 @@ SODA3: `POST /api/v3/views/ecmv-9xxi/query.json` with `{"query", "page": {"pageN
 - `network`: see above.
 - `database`: RDS, subnet/parameter groups, migrate Lambda. Outputs `connection_env` (DB_HOST/PORT/NAME) and `dbuser_arn_prefix` for other modules' IAM policies.
 - `lambda_function`: helper used for every Lambda. It creates the function plus its own IAM role and log group (14-day retention). Inputs: optional `vpc`, optional `policy_json`. All functions share `build/lambda.zip` and differ only by `handler`.
-- `ingest`, `api`, `frontend`: to come.
+- `ingest`: raw bucket `afs-<env>-raw-<account_id>` (versioned, TLS-only; `force_destroy` in dev). It holds the fetch Lambda (outside the VPC; `ssm:GetParameter` on the token, `s3:PutObject` on `raw/*`), the load Lambda (in the VPC; `s3:GetObject` on `raw/*`, `rds-db:connect` as afs_loader), the S3 notification (ObjectCreated, `raw/` + `.json.gz`) with an `aws_lambda_permission`, and an optional EventBridge Scheduler (`schedule_enabled`; Wednesdays 07:00 America/Chicago, the day after the city's Tuesday publishes). The dev settings are `since_days = 90` and no schedule; trigger a fetch with `uv run afs remote-fetch --env dev`.
+- Gotcha: static RDS parameters (e.g. `rds.force_ssl`) need `apply_method = "pending-reboot"` in config, or every plan shows a diff.
+- `api`, `frontend`: to come.
 
 ## Python
 
@@ -153,8 +155,8 @@ src/afs/pipeline.py    orchestration shared by CLI and Lambda; storage left to c
 src/afs/db.py          connections (local DSN or IAM), migrations, role bootstrap, upserts
 src/afs/bootstrap_roles.sql, certs/rds-global-bundle.pem
 src/afs/migrations/NNN_*.sql   numbered, append-only; applied by db.migrate()
-src/afs/handlers/      Lambda entry points (migrate; fetch/load/query to come)
-src/afs/cli.py         `uv run afs migrate|fetch|load|remote-migrate`
+src/afs/handlers/      Lambda entry points: migrate, fetch, load (query to come)
+src/afs/cli.py         `uv run afs migrate|fetch|load|remote-migrate|remote-fetch`
 scripts/build_lambda.py
 tests/                 pytest (unit + integration against docker Postgres)
 frontend/              index.html, app.js
@@ -165,7 +167,11 @@ infra/bootstrap/{dev,prod}, infra/modules/*, infra/envs/{dev,prod}
 ## Build phases
 
 1. ✅ Local ETL against docker Postgres (schema, transforms + tests, Socrata client, metrics, CLI).
-2. Dev infra: ✅ bootstrap (both accounts), ✅ network, database (in progress), ingest.
+2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
 3. API.
 4. Frontend.
 5. Prod + CI.
+
+## Windows notes
+
+- Git Bash rewrites arguments starting with `/` into Windows paths (it broke `--log-group-name /aws/lambda/...`). Prefix the command with `MSYS_NO_PATHCONV=1`, or use PowerShell.
