@@ -42,14 +42,17 @@ provider "aws" {
 module "bootstrap" {
   source = "../../modules/bootstrap"
 
-  env              = "prod"
-  github_repo      = "jtravisp/austinfoodscores"
-  github_owner_id  = "109884588"
-  github_repo_id   = "1411096114"
-  apply_subject    = "environment:production"
-  budget_name      = "afs-prod-monthly"
-  budget_limit_usd = "25.0"
-  budget_email     = var.budget_email
+  env             = "prod"
+  github_repo     = "jtravisp/austinfoodscores"
+  github_owner_id = "109884588"
+  github_repo_id  = "1411096114"
+  apply_subject   = "environment:production"
+  # Site uploads run in a reviewer-free environment; "production" stays listed
+  # so a run already in flight when this changed could still finish.
+  web_deploy_subjects = ["environment:production-site", "environment:production"]
+  budget_name         = "afs-prod-monthly"
+  budget_limit_usd    = "25.0"
+  budget_email        = var.budget_email
 }
 
 # The budget was created with the AWS CLI before Terraform existed here.

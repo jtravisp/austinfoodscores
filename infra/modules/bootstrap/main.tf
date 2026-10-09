@@ -112,6 +112,9 @@ data "aws_iam_policy_document" "github_trust" {
   for_each = {
     plan  = flatten([for r in local.repo_shapes : ["repo:${r}:pull_request", "repo:${r}:ref:refs/heads/main"]])
     apply = [for r in local.repo_shapes : "repo:${r}:${var.apply_subject}"]
+    # Defaults to the apply subject; prod adds the reviewer-free production-site
+    # environment, so site-only deploys don't wait for an approval.
+    web = flatten([for r in local.repo_shapes : [for s in coalescelist(var.web_deploy_subjects, [var.apply_subject]) : "repo:${r}:${s}"]])
   }
 
   statement {
@@ -136,7 +139,7 @@ data "aws_iam_policy_document" "github_trust" {
 # --- CI roles -----------------------------------------------------------------------------
 
 resource "aws_iam_role" "ci" {
-  for_each = data.aws_iam_policy_document.github_trust
+  for_each = { for k, v in data.aws_iam_policy_document.github_trust : k => v if k != "web" }
 
   name                 = "afs-${var.env}-github-${each.key}"
   assume_role_policy   = each.value.json
@@ -171,13 +174,14 @@ resource "aws_iam_role_policy_attachment" "apply_admin" {
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
 }
 
-# web-deploy: uploads the static site and clears the CDN cache. Same trust as
-# apply (main / production), but the pipeline switches to this role before the
-# upload step, so that step never holds admin credentials. It can write one
+# web-deploy: uploads the static site and clears the CDN cache. Trusted from
+# `web_deploy_subjects` (default: the apply subject). In prod that's the
+# reviewer-free `production-site` environment: a site-only deploy needs no
+# approval, because this role can't change anything but the site's files. It can write one
 # bucket and invalidate CloudFront, nothing else (as in ncoer's ci-deploy-web).
 resource "aws_iam_role" "web_deploy" {
   name                 = "afs-${var.env}-github-web-deploy"
-  assume_role_policy   = data.aws_iam_policy_document.github_trust["apply"].json
+  assume_role_policy   = data.aws_iam_policy_document.github_trust["web"].json
   max_session_duration = 3600
 }
 
