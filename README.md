@@ -34,7 +34,7 @@ uv run afs fetch                # full snapshot -> data/raw/YYYY-MM-DD/*.json.gz
 uv run afs load data/raw/<date>/<file>.json.gz
 uv run afs serve                # map + API at http://localhost:8001
 uv run pytest                   # unit + integration tests
-node --test frontend/           # frontend unit tests (search)
+node --test frontend/*.test.mjs  # frontend unit tests (search)
 ```
 
 Then explore: `docker compose exec db psql -U afs -d afs -c "SELECT * FROM establishment_metrics LIMIT 5"`.

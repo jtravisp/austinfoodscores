@@ -37,4 +37,4 @@ jobs:
       - run: uv sync --locked
       - run: uv run pytest -q
       # Frontend logic (search.js) under Node's built-in runner; no npm, no deps.
-      - run: node --test frontend/
+      - run: node --test frontend/*.test.mjs
