@@ -51,10 +51,15 @@ def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("--env", required=True, choices=["dev", "prod"])
     parser.add_argument("--profile", help='AWS profile (default afs-<env>; "" = ambient credentials, e.g. CI)')
+    parser.add_argument("--bucket", help="skip terraform output lookup (CI passes these)")
+    parser.add_argument("--distribution")
     args = parser.parse_args()
     profile = f"afs-{args.env}" if args.profile is None else (args.profile or None)
 
-    outputs = terraform_outputs(args.env, profile)
+    if args.bucket and args.distribution:
+        outputs = {"site_bucket": args.bucket, "distribution_id": args.distribution, "site_url": "(see terraform output)"}
+    else:
+        outputs = terraform_outputs(args.env, profile)
     bucket, distribution = outputs["site_bucket"], outputs["distribution_id"]
     session = boto3.Session(profile_name=profile)
     s3 = session.client("s3")

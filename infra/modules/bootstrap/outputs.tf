@@ -13,3 +13,7 @@ output "apply_role_arn" {
 output "socrata_token_parameter" {
   value = aws_ssm_parameter.socrata_token.name
 }
+
+output "web_deploy_role_arn" {
+  value = aws_iam_role.web_deploy.arn
+}

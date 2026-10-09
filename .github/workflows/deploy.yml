@@ -1,0 +1,119 @@
+# Merges to main: test -> plan prod -> (your approval) -> apply that exact plan
+# -> migrate -> deploy the site.
+#
+# The approval gate is the `production` GitHub environment (required reviewer).
+# Review the plan in the plan job's summary, then approve; apply uses the saved
+# plan file, so it applies what you reviewed or fails as stale.
+name: deploy
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# Never run two prod deploys at once, and never cancel one halfway.
+concurrency:
+  group: deploy-prod
+  cancel-in-progress: false
+
+env:
+  ACCOUNT: "169406897968"
+  TF_IN_AUTOMATION: "1"
+  TF_VAR_alarm_email: ${{ vars.ALARM_EMAIL }}
+
+jobs:
+  test:
+    uses: ./.github/workflows/test.yml
+
+  plan:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv run python scripts/build_lambda.py
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.3
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT }}:role/afs-prod-github-plan
+          aws-region: us-east-1
+      - run: terraform -chdir=infra/envs/prod init -input=false
+      - run: terraform -chdir=infra/envs/prod plan -input=false -no-color -lock-timeout=120s -out=tfplan
+      - name: plan summary (review this before approving)
+        run: |
+          {
+            echo "## Plan: prod"
+            echo '```'
+            terraform -chdir=infra/envs/prod show -no-color tfplan | tail -c 60000
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      # The plan and the zip it hashed travel to the apply job together.
+      - uses: actions/upload-artifact@v7
+        with:
+          name: prod-plan
+          path: |
+            infra/envs/prod/tfplan
+            build/lambda.zip
+          retention-days: 1
+
+  apply:
+    needs: plan
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: https://austinfood.travispollard.com
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      # Paths are kept relative to the repo root, so tfplan and lambda.zip land
+      # back exactly where the plan job wrote them.
+      - uses: actions/download-artifact@v8
+        with:
+          name: prod-plan
+      - run: ls -la build/lambda.zip infra/envs/prod/tfplan
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.3
+          terraform_wrapper: false
+
+      # Admin role: only assumable from jobs in the `production` environment.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT }}:role/afs-prod-github-apply
+          aws-region: us-east-1
+      - run: terraform -chdir=infra/envs/prod init -input=false
+      - name: terraform apply (the reviewed plan)
+        run: terraform -chdir=infra/envs/prod apply -input=false -no-color tfplan
+      - name: run migrations
+        run: uv run afs remote-migrate --env prod --profile ""
+      - name: read outputs
+        id: tf
+        run: |
+          echo "bucket=$(terraform -chdir=infra/envs/prod output -raw site_bucket)" >> "$GITHUB_OUTPUT"
+          echo "distribution=$(terraform -chdir=infra/envs/prod output -raw distribution_id)" >> "$GITHUB_OUTPUT"
+
+      # Swap to the web-deploy role: the upload step never holds admin credentials.
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT }}:role/afs-prod-github-web-deploy
+          aws-region: us-east-1
+      - name: deploy site
+        run: >-
+          uv run python scripts/deploy_site.py --env prod --profile ""
+          --bucket ${{ steps.tf.outputs.bucket }} --distribution ${{ steps.tf.outputs.distribution }}

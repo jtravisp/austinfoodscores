@@ -19,3 +19,7 @@ output "master_secret_arn" {
 output "migrate_function_name" {
   value = module.migrate.function_name
 }
+
+output "identifier" {
+  value = aws_db_instance.this.identifier
+}

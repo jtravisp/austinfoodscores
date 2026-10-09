@@ -1,0 +1,81 @@
+# Dev on demand. Actions -> dev -> Run workflow (from main):
+#   apply:   build the whole dev environment, set up the DB, load a 90-day
+#            slice, deploy the site (~10 min). Start of a session.
+#   destroy: tear dev down to $0. End of a session.
+# The dev apply role only trusts runs on main, so this can't run from a branch.
+name: dev
+
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: apply or destroy
+        type: choice
+        options: [apply, destroy]
+        default: apply
+
+permissions:
+  contents: read
+
+concurrency:
+  group: dev
+  cancel-in-progress: false
+
+env:
+  ACCOUNT: "060516714585"
+  TF_IN_AUTOMATION: "1"
+
+jobs:
+  dev:
+    name: dev ${{ inputs.action }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/checkout@v7
+      - uses: astral-sh/setup-uv@v10.2.0
+        with:
+          enable-cache: true
+      - run: uv run python scripts/build_lambda.py
+      - uses: hashicorp/setup-terraform@v4
+        with:
+          terraform_version: 1.15.3
+          terraform_wrapper: false
+      - uses: aws-actions/configure-aws-credentials@v6
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT }}:role/afs-dev-github-apply
+          aws-region: us-east-1
+      - run: terraform -chdir=infra/envs/dev init -input=false
+
+      - name: terraform destroy
+        if: inputs.action == 'destroy'
+        run: terraform -chdir=infra/envs/dev destroy -input=false -no-color -auto-approve
+
+      - name: terraform apply
+        if: inputs.action == 'apply'
+        run: terraform -chdir=infra/envs/dev apply -input=false -no-color -auto-approve
+      - name: database roles + migrations
+        if: inputs.action == 'apply'
+        run: uv run afs remote-migrate --env dev --bootstrap --profile ""
+      - name: fetch (the S3 upload triggers the load)
+        if: inputs.action == 'apply'
+        run: uv run afs remote-fetch --env dev --profile ""
+      - name: read outputs
+        if: inputs.action == 'apply'
+        id: tf
+        run: |
+          echo "bucket=$(terraform -chdir=infra/envs/dev output -raw site_bucket)" >> "$GITHUB_OUTPUT"
+          echo "distribution=$(terraform -chdir=infra/envs/dev output -raw distribution_id)" >> "$GITHUB_OUTPUT"
+          echo "url=$(terraform -chdir=infra/envs/dev output -raw site_url)" >> "$GITHUB_OUTPUT"
+      - uses: aws-actions/configure-aws-credentials@v6
+        if: inputs.action == 'apply'
+        with:
+          role-to-assume: arn:aws:iam::${{ env.ACCOUNT }}:role/afs-dev-github-web-deploy
+          aws-region: us-east-1
+      - name: deploy site
+        if: inputs.action == 'apply'
+        run: |
+          uv run python scripts/deploy_site.py --env dev --profile "" \
+            --bucket ${{ steps.tf.outputs.bucket }} --distribution ${{ steps.tf.outputs.distribution }}
+          echo "Dev site: ${{ steps.tf.outputs.url }}" >> "$GITHUB_STEP_SUMMARY"

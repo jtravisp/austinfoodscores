@@ -9,6 +9,21 @@ data "aws_caller_identity" "current" {}
 locals {
   account_id = data.aws_caller_identity.current.account_id
   oidc_host  = "token.actions.githubusercontent.com"
+
+  # GitHub mints the OIDC `sub` claim in two shapes:
+  #   classic:   repo:jtravisp/austinfoodscores:...
+  #   immutable: repo:jtravisp@109884588/austinfoodscores@1411096114:...
+  # The immutable one carries numeric owner/repo ids so a trust policy can't be
+  # inherited by whoever registers the name after a rename. The first CI run was
+  # refused with only the classic shape trusted (2026-10-09); ncoer saw the same.
+  # Both are listed as exact strings: StringEquals over a list is an OR of exact
+  # matches, as tight as one value, unlike a StringLike wildcard.
+  repo_owner = split("/", var.github_repo)[0]
+  repo_name  = split("/", var.github_repo)[1]
+  repo_shapes = [
+    var.github_repo,
+    "${local.repo_owner}@${var.github_owner_id}/${local.repo_name}@${var.github_repo_id}",
+  ]
 }
 
 # --- Terraform state bucket ----------------------------------------------------------
@@ -89,11 +104,14 @@ resource "aws_iam_openid_connect_provider" "github" {
   client_id_list = ["sts.amazonaws.com"]
 }
 
-# Trust policy factory: only tokens for this repo, minted for AWS, with the given `sub`.
+# Trust policy factory: only tokens for this repo, minted for AWS, with one of the given `sub`s.
+#   plan:  pull requests, and runs on main (the deploy pipeline plans on main
+#          before the approval gate). Read-only, so a wider trust is safe.
+#   apply: main (dev) or the protected `production` environment (prod).
 data "aws_iam_policy_document" "github_trust" {
   for_each = {
-    plan  = "repo:${var.github_repo}:pull_request"
-    apply = "repo:${var.github_repo}:${var.apply_subject}"
+    plan  = flatten([for r in local.repo_shapes : ["repo:${r}:pull_request", "repo:${r}:ref:refs/heads/main"]])
+    apply = [for r in local.repo_shapes : "repo:${r}:${var.apply_subject}"]
   }
 
   statement {
@@ -110,7 +128,7 @@ data "aws_iam_policy_document" "github_trust" {
     condition {
       test     = "StringEquals"
       variable = "${local.oidc_host}:sub"
-      values   = [each.value]
+      values   = each.value
     }
   }
 }
@@ -151,6 +169,40 @@ resource "aws_iam_role_policy" "plan_state_lock" {
 resource "aws_iam_role_policy_attachment" "apply_admin" {
   role       = aws_iam_role.ci["apply"].name
   policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+}
+
+# web-deploy: uploads the static site and clears the CDN cache. Same trust as
+# apply (main / production), but the pipeline switches to this role before the
+# upload step, so that step never holds admin credentials. It can write one
+# bucket and invalidate CloudFront, nothing else (as in ncoer's ci-deploy-web).
+resource "aws_iam_role" "web_deploy" {
+  name                 = "afs-${var.env}-github-web-deploy"
+  assume_role_policy   = data.aws_iam_policy_document.github_trust["apply"].json
+  max_session_duration = 3600
+}
+
+resource "aws_iam_role_policy" "web_deploy" {
+  name = "deploy-site"
+  role = aws_iam_role.web_deploy.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        # The site bucket's name is fixed by convention (modules/frontend), so
+        # this can be scoped before the bucket exists.
+        Sid      = "SyncSiteBucket"
+        Effect   = "Allow"
+        Action   = ["s3:PutObject", "s3:GetObject", "s3:DeleteObject", "s3:ListBucket"]
+        Resource = ["arn:aws:s3:::afs-${var.env}-site-${local.account_id}", "arn:aws:s3:::afs-${var.env}-site-${local.account_id}/*"]
+      },
+      {
+        Sid      = "InvalidateCdn"
+        Effect   = "Allow"
+        Action   = ["cloudfront:CreateInvalidation", "cloudfront:GetInvalidation"]
+        Resource = "arn:aws:cloudfront::${local.account_id}:distribution/*"
+      },
+    ]
+  })
 }
 
 # --- Socrata app token ----------------------------------------------------------------------

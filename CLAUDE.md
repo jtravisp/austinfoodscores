@@ -11,6 +11,7 @@ Product requirements (goals, endpoints, metric definitions, open questions): [`d
 - At the end of each phase: list what to verify and which AWS/Terraform concepts it exercised.
 - Terraform applies are pre-authorized: show the plan, apply routine changes, and stop to ask before anything expensive, destructive, or touching prod data.
 - Commit messages: brief and to the point.
+- **PR workflow (since Phase 5):** `main` is protected. Work on a branch, open a PR with `gh`, and let CI (tests + plans) go green. The owner merges, or asks Claude to. Merging to `main` deploys prod behind the `production` environment approval.
 - Repo: github.com/jtravisp/austinfoodscores (public).
 
 ## Why ingest instead of querying live
@@ -128,7 +129,7 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
   4. `uv run afs remote-fetch --env dev`, which uploads to S3; that triggers the load. Check `/aws/lambda/afs-dev-load` logs.
   5. `uv run python scripts/deploy_site.py --env dev`, then open the `site_url` output.
   Session end: `terraform -chdir=infra/envs/dev destroy`. The bootstrap stacks stay.
-- **prod**: full backfill, weekly schedule, deletion protection, 7-day backups, flow logs.
+- **prod** (live since 2026-10-09 at https://austinfood.travispollard.com): full dataset, weekly schedule (Wed 07:00 America/Chicago), deletion protection, 7-day backups, final snapshot, flow logs, `apply_immediately = false`, alarms → SNS email (subscription confirmed). Root `infra/envs/prod`; `alarm_email` comes from gitignored `alarm.local.auto.tfvars` locally and the `ALARM_EMAIL` Actions variable in CI.
 - Bootstrap (applied by hand, never by CI; done for both accounts 2026-10-08): `infra/modules/bootstrap` + thin roots `infra/bootstrap/{dev,prod}`. Each creates:
   - state bucket `afs-tfstate-<account_id>` (versioned, TLS-only, `prevent_destroy`); bootstrap's own state is at key `bootstrap/terraform.tfstate`
   - the GitHub OIDC provider and two CI roles. `afs-<env>-github-plan` has ReadOnlyAccess plus write access to the `*.tflock` lock file, and trusts only `repo:jtravisp/austinfoodscores:pull_request`. `afs-<env>-github-apply` has AdministratorAccess, and trusts `ref:refs/heads/main` (dev) or `environment:production` (prod).
@@ -139,7 +140,13 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
 - Providers pin `allowed_account_ids` so a misconfigured profile can't apply to the wrong account. Bootstrap roots hardcode `profile`; env roots must not (CI uses OIDC credentials), so locally set `AWS_PROFILE`.
 - Account IDs (dev 060516714585, prod 169406897968) appear in the repo. They are identifiers, not secrets.
 - If a stale `.tflock` blocks Terraform: read the lock object to confirm the owner, then `terraform force-unlock <ID>`.
-- CI: GitHub Actions with AWS OIDC. Plan on PR, auto-apply dev on merge to main, manual approval (GitHub `production` environment) before prod.
+- **CI/CD** (`.github/workflows/`; actions: checkout v7, setup-uv v10, setup-terraform v4 pinned to TF 1.15.3, configure-aws-credentials v6, upload/download-artifact v7/v8):
+  - `test.yml` (reusable): pytest against a `postgres:17` service container.
+  - `ci.yml` (pull requests): test, plus `plan (dev)` and `plan (prod)` (fmt -check, validate, plan → job summary) with the read-only plan roles. Fork PRs get no OIDC token, so plans are skipped for them.
+  - `deploy.yml` (push to main): test → **plan** prod (plan role; saved `tfplan` + `lambda.zip` artifact, 1-day retention; summary to review) → **apply** in the `production` environment (required reviewer: jtravisp). It applies *that* plan file (stale → fails), runs `remote-migrate`, then **switches to the web-deploy role** for the site upload. Concurrency `deploy-prod`, never cancelled.
+  - `dev.yml` (manual, from main): `apply` builds dev end to end (apply, `--bootstrap` migrate, fetch, site deploy); `destroy` tears it down. **Merges never touch dev.**
+  - IAM: every CI trust lists the OIDC `sub` in **both** shapes GitHub mints: classic `repo:jtravisp/austinfoodscores:…` and immutable `repo:jtravisp@109884588/austinfoodscores@1411096114:…` (the first CI run was refused with only the classic shape). The plan role trusts `pull_request` **and** `ref:refs/heads/main` (read-only; the deploy plan runs on main). The apply and **web-deploy** roles (`afs-<env>-github-web-deploy`: put/get/delete/list on the site bucket, CloudFront invalidations) trust `main` (dev) / `environment:production` (prod).
+  - CLI/scripts accept `--profile ""` to use ambient (OIDC) credentials; `deploy_site.py --bucket --distribution` skips the terraform-output lookup.
 
 ## Terraform modules
 
@@ -153,6 +160,7 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
 - `frontend`: site bucket, OAC, CloudFront with the S3 + `/api/*` origins, response headers policy (CSP from `infra/modules/frontend/csp.txt`). Optional `domain` input: when set (prod), it also creates the ACM cert, aliases, and Route 53 records in the delegated zone. There's no `custom_error_response`: it would apply to the API origin too and turn JSON 404s into HTML.
 - Gotcha: the managed cache policy `UseOriginCacheControlHeaders-QueryStrings` (no `Managed-` prefix) keys on, and so forwards, **`Host`** (API Gateway rejects that) and on all cookies. We use our own `aws_cloudfront_cache_policy.api` instead: query strings only, gzip/brotli on, `default_ttl 0`, `max_ttl 3600`. Headers in a cache key are always sent to the origin, whatever the origin request policy says.
 - `infra/dns`: see Hosting and DNS.
+- `monitoring` (prod): SNS topic + email subscription. Alarms: Lambda `Errors` for fetch/load/query, Scheduler `TargetErrorCount`, API `5xx` ≥5 in 5 min, RDS CPU >80% for 15 min, `FreeStorageSpace` <2 GB. Missing data counts as not breaching, except storage.
 
 ## Frontend
 
@@ -181,7 +189,9 @@ Modeled on ncoer.travispollard.com (`../armybandncoer/infra/dns` and `infra/prod
 - Python 3.12, uv for deps, pytest for unit tests.
 - Transform/cleaning logic lives in pure functions (`src/afs/transform.py`), separate from Lambda handlers (`src/afs/handlers/`), so it is testable locally.
 - Lambda runtime: python3.12 on **arm64**.
-- Packaging: **one deterministic zip** (`scripts/build_lambda.py` → `build/lambda.zip`, ~7 MB). Deps come from `uv export` (the lock file), installed with `--python-platform aarch64-manylinux_2_28 --only-binary=:all:`. Note: manylinux2014 is too old for psycopg 3.3; Lambda's AL2023 has glibc 2.34. boto3 is not packaged (the runtime provides it). Rebuilding unchanged code gives an identical hash, so Terraform doesn't redeploy. Chosen over a container image: a ~5 MB dependency doesn't justify ECR, Docker builds in CI, and slower cold starts.
+- On Windows, write files with `write_bytes`/`newline="
+"`: `Path.write_text()` silently writes CRLF (that caused a cross-platform zip diff).
+- Packaging: **one deterministic zip** (`scripts/build_lambda.py` → `build/lambda.zip`, ~7 MB). Deps come from `uv export` (the lock file), installed with `--python-platform aarch64-manylinux_2_28 --only-binary=:all:`. Note: manylinux2014 is too old for psycopg 3.3; Lambda's AL2023 has glibc 2.34. boto3 is not packaged (the runtime provides it). Rebuilding unchanged code on the same platform gives an identical hash, so Terraform doesn't redeploy. **Across platforms it doesn't** (zlib differences, plus uv writing some wheel metadata differently on Windows), so the **Linux build in CI is the canonical artifact**. A local Windows plan may show a Lambda-only `source_code_hash` diff; that's expected. Don't apply prod from a laptop (CI owns prod). The build also normalizes CRLF→LF in `afs/` text files and pins `create_system = 3`. Chosen over a container image: a ~5 MB dependency doesn't justify ECR, Docker builds in CI, and slower cold starts.
 - Dev-only deps: pytest, python-dotenv, tzdata (Windows zoneinfo), boto3.
 
 ## Repo layout
@@ -211,7 +221,11 @@ infra/bootstrap/{dev,prod}, infra/dns, infra/modules/*, infra/envs/{dev,prod}
 2. ✅ Dev infra: bootstrap (both accounts), network, database, ingest. Verified end to end 2026-10-09.
 3. ✅ API (dev, verified 2026-10-09).
 4. ✅ Frontend (dev, verified 2026-10-09) and DNS delegation for austinfood.travispollard.com.
-5. Prod (live at austinfood.travispollard.com) + CI.
+5. Prod (✅ live 2026-10-09 at austinfood.travispollard.com) + CI (in progress).
+
+## Related repos
+
+- `../travispollard.com`: the personal site. Its header has an **Apps** disclosure menu (CFB Forecast, NCOER Writer, Austin Food Scores) and a `austin-food-scores` entry in `frontend/content/projects.ts` (PR jtravisp/travispollard.com#102). That repo has its own conventions (see its CLAUDE.md): project `items` are in Travis's voice, and generated sitemaps must not be committed by hand.
 
 ## Windows notes
 
